@@ -5,8 +5,8 @@ import PackageDescription
 let package = Package(
     name: "libetos",
     platforms: [
-        .macOS(.v14),
-        .iOS(.v16),
+        .iOS(.v12),
+         .macOS(.v10_15),
     ],
     products: [
         .library(name: "libetos", targets: ["libetos"]),
