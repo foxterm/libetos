@@ -3,36 +3,68 @@
 #include <stdlib.h>
 
 // ---------------------------------------------------------
-// 1. 互斥锁实现
+// 1. 互斥锁全平台适配实现
 // ---------------------------------------------------------
 
 void etos_sync_mutex_init(etos_sync_mutex_t *m) {
   if (!m)
     return;
+#if defined(__APPLE__)
   m->lock = OS_UNFAIR_LOCK_INIT;
+#elif defined(_WIN32)
+  InitializeCriticalSection(&m->lock);
+#else
+  pthread_mutex_init(&m->lock, NULL);
+#endif
 }
 
 void etos_sync_mutex_lock(etos_sync_mutex_t *m) {
   if (!m)
     return;
+#if defined(__APPLE__)
   os_unfair_lock_lock(&m->lock);
+#elif defined(_WIN32)
+  EnterCriticalSection(&m->lock);
+#else
+  pthread_mutex_lock(&m->lock);
+#endif
 }
 
 int etos_sync_mutex_trylock(etos_sync_mutex_t *m) {
   if (!m)
     return 0;
-  return os_unfair_lock_trylock(&m->lock);
+#if defined(__APPLE__)
+  return os_unfair_lock_trylock(&m->lock) ? 1 : 0;
+#elif defined(_WIN32)
+  // TryEnterCriticalSection 成功返回非零 (BOOL)，失败返回 0
+  return TryEnterCriticalSection(&m->lock) != 0 ? 1 : 0;
+#else
+  // pthread_mutex_trylock 成功返回 0，失败返回非 0 错误码
+  return (pthread_mutex_trylock(&m->lock) == 0) ? 1 : 0;
+#endif
 }
 
 void etos_sync_mutex_unlock(etos_sync_mutex_t *m) {
   if (!m)
     return;
+#if defined(__APPLE__)
   os_unfair_lock_unlock(&m->lock);
+#elif defined(_WIN32)
+  LeaveCriticalSection(&m->lock);
+#else
+  pthread_mutex_unlock(&m->lock);
+#endif
 }
 
 void etos_sync_mutex_destroy(etos_sync_mutex_t *m) {
-  // os_unfair_lock 为值类型结构，无需清理动态资源
-  (void)m;
+  if (!m)
+    return;
+#if defined(_WIN32)
+  DeleteCriticalSection(&m->lock);
+#elif !defined(__APPLE__)
+  // os_unfair_lock 为值类型无动态资源，仅非 Apple 的 POSIX 系统需要 destroy
+  pthread_mutex_destroy(&m->lock);
+#endif
 }
 
 // ---------------------------------------------------------

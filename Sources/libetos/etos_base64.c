@@ -1,113 +1,101 @@
 #include "etos_base64.h"
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
-static const char b64_table[] =
+static const char base64_table[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-void etos_base64_free(void *ptr) {
-  if (ptr) {
-    free(ptr);
-  }
-}
-
-char *etos_base64_encode_bytes(const unsigned char *data, size_t len) {
-  if (!data)
+char *etos_base64_encode(const char *src) {
+  if (!src)
     return NULL;
 
+  size_t len = strlen(src);
   size_t out_len = 4 * ((len + 2) / 3);
   char *out = (char *)malloc(out_len + 1);
   if (!out)
     return NULL;
 
   size_t i = 0, j = 0;
-  for (; i + 2 < len; i += 3) {
-    out[j++] = b64_table[(data[i] >> 2) & 0x3F];
-    out[j++] = b64_table[((data[i] & 0x03) << 4) | ((data[i + 1] >> 4) & 0x0F)];
-    out[j++] = b64_table[((data[i + 1] & 0x0F) << 2) | ((data[i + 2] >> 6) & 0x03)];
-    out[j++] = b64_table[data[i + 2] & 0x3F];
-  }
+  while (i < len) {
+    uint32_t octet_a = i < len ? (unsigned char)src[i++] : 0;
+    uint32_t octet_b = i < len ? (unsigned char)src[i++] : 0;
+    uint32_t octet_c = i < len ? (unsigned char)src[i++] : 0;
 
-  if (i < len) {
-    out[j++] = b64_table[(data[i] >> 2) & 0x3F];
-    if (i + 1 == len) {
-      out[j++] = b64_table[(data[i] & 0x03) << 4];
-      out[j++] = '=';
-    } else {
-      out[j++] = b64_table[((data[i] & 0x03) << 4) | ((data[i + 1] >> 4) & 0x0F)];
-      out[j++] = b64_table[(data[i + 1] & 0x0F) << 2];
-    }
-    out[j++] = '=';
+    uint32_t triple = (octet_a << 16) + (octet_b << 8) + octet_c;
+
+    out[j++] = base64_table[(triple >> 18) & 0x3F];
+    out[j++] = base64_table[(triple >> 12) & 0x3F];
+    out[j++] = (i > len + 1) ? '=' : base64_table[(triple >> 6) & 0x3F];
+    out[j++] = (i > len) ? '=' : base64_table[triple & 0x3F];
   }
 
   out[j] = '\0';
   return out;
 }
 
-char *etos_base64_encode(const char *input) {
-  if (!input)
-    return NULL;
-  return etos_base64_encode_bytes((const unsigned char *)input, strlen(input));
-}
-
-static int b64_char_value(char c) {
-  if (c >= 'A' && c <= 'Z')
-    return c - 'A';
-  if (c >= 'a' && c <= 'z')
-    return c - 'a' + 26;
-  if (c >= '0' && c <= '9')
-    return c - '0' + 52;
-  if (c == '+')
-    return 62;
-  if (c == '/')
-    return 63;
-  return -1;
-}
-
-unsigned char *etos_base64_decode(const char *input, size_t *out_len) {
-  if (!input)
+unsigned char *etos_base64_decode(const char *src, size_t *out_len) {
+  if (!src)
     return NULL;
 
-  size_t len = strlen(input);
+  size_t len = strlen(src);
   if (len % 4 != 0)
     return NULL;
 
-  size_t padding = 0;
-  if (len >= 1 && input[len - 1] == '=')
-    padding++;
-  if (len >= 2 && input[len - 2] == '=')
-    padding++;
+  size_t decoded_len = len / 4 * 3;
+  if (len > 0 && src[len - 1] == '=')
+    decoded_len--;
+  if (len > 1 && src[len - 2] == '=')
+    decoded_len--;
 
-  size_t decoded_len = (len / 4) * 3 - padding;
   unsigned char *out = (unsigned char *)malloc(decoded_len + 1);
   if (!out)
     return NULL;
 
-  size_t i = 0, j = 0;
-  for (; i < len; i += 4) {
-    int v1 = b64_char_value(input[i]);
-    int v2 = b64_char_value(input[i + 1]);
-    int v3 = (input[i + 2] == '=') ? 0 : b64_char_value(input[i + 2]);
-    int v4 = (input[i + 3] == '=') ? 0 : b64_char_value(input[i + 3]);
+  static const int d[] = {
+      -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+      -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+      -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 62, -1, -1, -1, 63,
+      52, 53, 54, 55, 56, 57, 58, 59, 60, 61, -1, -1, -1, -0, -1, -1,
+      -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
+      15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -1, -1, -1, -1, -1,
+      -1, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+      41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, -1, -1, -1, -1, -1};
 
-    if (v1 < 0 || v2 < 0 || (input[i + 2] != '=' && v3 < 0) || (input[i + 3] != '=' && v4 < 0)) {
+  size_t i = 0, j = 0;
+  while (i < len) {
+    int a = (src[i] == '=') ? 0 : d[(unsigned char)src[i]];
+    i++;
+    int b = (src[i] == '=') ? 0 : d[(unsigned char)src[i]];
+    i++;
+    int c = (src[i] == '=') ? 0 : d[(unsigned char)src[i]];
+    i++;
+    int d_val = (src[i] == '=') ? 0 : d[(unsigned char)src[i]];
+    i++;
+
+    if (a < 0 || b < 0 || c < 0 || d_val < 0) {
       free(out);
       return NULL;
     }
 
-    out[j++] = (unsigned char)((v1 << 2) | (v2 >> 4));
-    if (input[i + 2] != '=') {
-      out[j++] = (unsigned char)(((v2 & 0x0F) << 4) | (v3 >> 2));
-    }
-    if (input[i + 3] != '=') {
-      out[j++] = (unsigned char)(((v3 & 0x03) << 6) | v4);
-    }
+    uint32_t triple = (a << 18) + (b << 12) + (c << 6) + d_val;
+
+    if (j < decoded_len)
+      out[j++] = (triple >> 16) & 0xFF;
+    if (j < decoded_len)
+      out[j++] = (triple >> 8) & 0xFF;
+    if (j < decoded_len)
+      out[j++] = triple & 0xFF;
   }
 
   out[decoded_len] = '\0';
-  if (out_len) {
+  if (out_len)
     *out_len = decoded_len;
-  }
-
   return out;
+}
+
+void etos_base64_free(void *ptr) {
+  if (ptr) {
+    free(ptr);
+  }
 }
