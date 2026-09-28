@@ -12,15 +12,6 @@
 
 typedef int socklen_t;
 #define strncasecmp _strnicmp
-
-static void etos_socket_init_env(void) {
-  static int initialized = 0;
-  if (!initialized) {
-    WSADATA wsa;
-    WSAStartup(MAKEWORD(2, 2), &wsa);
-    initialized = 1;
-  }
-}
 #else
 #include <arpa/inet.h>
 #include <errno.h>
@@ -40,6 +31,33 @@ static void etos_socket_init_env(void) {
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifndef ETOS_INVALID_SOCKET
+#if defined(_WIN32)
+#define ETOS_INVALID_SOCKET (SOCKET)(~0)
+#else
+#define ETOS_INVALID_SOCKET (-1)
+#endif
+#endif
+
+/* ------------------------------------------------------------
+   网络环境初始化 / 清理接口
+   ------------------------------------------------------------ */
+int etos_socket_init_env(void) {
+#if defined(_WIN32)
+  WSADATA wsa;
+  if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+    return -1;
+  }
+#endif
+  return 0;
+}
+
+void etos_socket_cleanup_env(void) {
+#if defined(_WIN32)
+  WSACleanup();
+#endif
+}
 
 /* ------------------------------------------------------------
    内部辅助函数
@@ -75,26 +93,8 @@ static int bind_to_interface(int fd, int family, const char *ifname_or_ip) {
     return 0;
   }
 
-#if defined(_WIN32)
-  // Windows 下尝试将参数作为 IP 进行 bind
-  if (family == AF_INET) {
-    struct sockaddr_in local_addr;
-    memset(&local_addr, 0, sizeof(local_addr));
-    local_addr.sin_family = AF_INET;
-    if (inet_pton(AF_INET, ifname_or_ip, &local_addr.sin_addr) == 1) {
-      return bind(fd, (struct sockaddr *)&local_addr, sizeof(local_addr));
-    }
-  } else if (family == AF_INET6) {
-    struct sockaddr_in6 local_addr6;
-    memset(&local_addr6, 0, sizeof(local_addr6));
-    local_addr6.sin6_family = AF_INET6;
-    if (inet_pton(AF_INET6, ifname_or_ip, &local_addr6.sin6_addr) == 1) {
-      return bind(fd, (struct sockaddr *)&local_addr6, sizeof(local_addr6));
-    }
-  }
-  return -1;
-#else
-  // macOS / POSIX 原始逻辑
+  // 1. 尝试作为网卡接口名处理（如 "en0", "en1"）
+#if defined(IP_BOUND_IF) || defined(IPV6_BOUND_IF)
   unsigned int ifindex = if_nametoindex(ifname_or_ip);
   if (ifindex != 0) {
 #if defined(IP_BOUND_IF)
@@ -109,7 +109,9 @@ static int bind_to_interface(int fd, int family, const char *ifname_or_ip) {
 #endif
     return -1;
   }
+#endif
 
+  // 2. 若非网卡名，尝试解析为本地 IP 地址并调用 bind
   if (family == AF_INET) {
     struct sockaddr_in local_addr;
     memset(&local_addr, 0, sizeof(local_addr));
@@ -127,7 +129,6 @@ static int bind_to_interface(int fd, int family, const char *ifname_or_ip) {
   }
 
   return -1;
-#endif
 }
 
 static bool recv_exact(int fd, void *buf, size_t len, int timeout_ms) {
@@ -448,7 +449,6 @@ EtosInterfaceInfo *etos_socket_get_interface_infos(int *count) {
   *count = 0;
 
 #if defined(_WIN32)
-  etos_socket_init_env();
   ULONG flags = GAA_FLAG_INCLUDE_PREFIX;
   ULONG outBufLen = 15000;
   PIP_ADAPTER_ADDRESSES pAddresses = (IP_ADAPTER_ADDRESSES *)malloc(outBufLen);
@@ -495,6 +495,7 @@ EtosInterfaceInfo *etos_socket_get_interface_infos(int *count) {
   return list;
 
 #else
+  // 100% 保持你原版的获取网卡逻辑
   struct ifaddrs *ifaddr = NULL;
   if (getifaddrs(&ifaddr) == -1) {
     return NULL;
@@ -595,10 +596,6 @@ int etos_socket_resolve_all_ips(const char *host, EtosIPAddr *addrs, size_t max_
     return -1;
   }
 
-#if defined(_WIN32)
-  etos_socket_init_env();
-#endif
-
   char clean_host[256];
   etos_clean_host(host, clean_host, sizeof(clean_host));
 
@@ -690,10 +687,6 @@ int etos_socket_set_nodelay(int fd, bool enable) {
 int etos_socket_connect(const char *host, int port, int timeout_ms, const char *ifname_or_ip) {
   if (!host || port <= 0 || port > 65535)
     return ETOS_INVALID_SOCKET;
-
-#if defined(_WIN32)
-  etos_socket_init_env();
-#endif
 
   char clean_host[256];
   etos_clean_host(host, clean_host, sizeof(clean_host));
