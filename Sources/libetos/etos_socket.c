@@ -93,7 +93,7 @@ static int bind_to_interface(int fd, int family, const char *ifname_or_ip) {
     return 0;
   }
 
-  // 1. 尝试作为网卡接口名处理（如 "en0", "en1"）
+  // 1. 尝试作为网卡接口名处理(如 "en0", "en1")
 #if defined(IP_BOUND_IF) || defined(IPV6_BOUND_IF)
   unsigned int ifindex = if_nametoindex(ifname_or_ip);
   if (ifindex != 0) {
