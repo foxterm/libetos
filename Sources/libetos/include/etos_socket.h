@@ -34,7 +34,7 @@
    ------------------------------------------------------------ */
 typedef struct {
   char ifname[32]; /* 网卡名称，如 "en6" 或 "eth0" */
-  char ip[64];     /* 主 IP 地址（优先 IPv4，无 IPv4 则显示 IPv6） */
+  char ip[64];     /* 主 IP 地址(优先 IPv4，无 IPv4 则显示 IPv6) */
 } EtosInterfaceInfo;
 
 /* ------------------------------------------------------------
@@ -43,7 +43,7 @@ typedef struct {
 typedef struct {
   _Atomic uint64_t rx_bytes; /* 接收总字节数 */
   _Atomic uint64_t tx_bytes; /* 发送总字节数 */
-  _Atomic uint32_t rtt_us;   /* 当前实时往返时间（微秒，瞬时值） */
+  _Atomic uint32_t rtt_us;   /* 当前实时往返时间(微秒，瞬时值) */
 } FdTrafficStats;
 
 /* ------------------------------------------------------------
@@ -58,7 +58,7 @@ typedef struct {
    网络 I/O 服务 (跨平台)
    ------------------------------------------------------------ */
 
-/** 初始化网络环境（仅 Windows 下初始化 WSA，其他平台空操作） */
+/** 初始化网络环境(仅 Windows 下初始化 WSA，其他平台空操作) */
 int etos_socket_init_env(void);
 
 /** 清理网络环境 */
@@ -79,13 +79,13 @@ uint64_t etos_stats_get_rx(const FdTrafficStats *stats);
 /** 获取发送的字节数 */
 uint64_t etos_stats_get_tx(const FdTrafficStats *stats);
 
-/** 获取 RTT（Round Trip Time） */
+/** 获取 RTT(Round Trip Time) */
 uint32_t etos_stats_get_rtt(const FdTrafficStats *stats);
 
 /** 解析域名并获取其所有的 IPv4 和 IPv6 地址 */
 int etos_socket_resolve_all_ips(const char *host, EtosIPAddr *addrs, size_t max_addrs);
 
-/** 创建 TCP 连接（支持 IPv4/IPv6 自动解析） */
+/** 创建 TCP 连接(支持 IPv4/IPv6 自动解析) */
 int etos_socket_connect(const char *host, int port, int timeout_ms, const char *ifname_or_ip);
 
 /** 通过代理创建连接 */
