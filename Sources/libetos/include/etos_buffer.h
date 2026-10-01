@@ -5,6 +5,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
   void *ptr;       /* 内存块起始地址，Swift 依靠 ptr 映射 T.self */
   size_t stride;   /* 单个元素的大小 (MemoryLayout<T>.stride) */
@@ -31,5 +35,9 @@ void etos_buffer_copy_bytes(const etos_buffer_t *buf, void *dest, size_t count);
  * 释放 Buffer 资源
  */
 void etos_buffer_free(etos_buffer_t *buf);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* ETOS_BUFFER_H */
