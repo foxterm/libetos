@@ -7,12 +7,19 @@
 #define ETOS_AES_GCM_IV_SIZE 12
 #define ETOS_AES_GCM_TAG_SIZE 16
 
+/* Ed25519 相关的固定长度定义 */
+#define ETOS_ED25519_PUBLIC_KEY_LEN 32
+#define ETOS_ED25519_PRIVATE_KEY_LEN 32
+#define ETOS_ED25519_SIGNATURE_LEN 64
+
 #define ETOS_OK 0
 #define ETOS_ERR_INVALID_PARAM -1
 #define ETOS_ERR_ALLOC_FAILED -2
 #define ETOS_ERR_ENCRYPT_FAILED -3
 #define ETOS_ERR_DECRYPT_FAILED -4
 #define ETOS_ERR_AUTH_FAILED -5
+#define ETOS_ERR_SIGN_FAILED -6
+#define ETOS_ERR_VERIFY_FAILED -7
 
 /**
  * @brief 生成指定长度的强随机字节序列（常用于生成 Key 和 IV）
@@ -55,5 +62,29 @@ int etos_aes_256_gcm_decrypt(const unsigned char *ciphertext, size_t ciphertext_
                              const unsigned char key[ETOS_AES_256_KEY_SIZE],
                              const unsigned char iv[ETOS_AES_GCM_IV_SIZE],
                              unsigned char *plaintext, size_t *plaintext_len);
+
+/**
+ * @brief 使用 Ed25519 私钥对数据进行数字签名
+ * @param msg 待签名的数据缓冲区
+ * @param msg_len 待签名数据的长度
+ * @param priv_key 32字节 Ed25519 私钥原始字节
+ * @param sig 输出 64 字节的签名缓冲区
+ * @return 0 成功，非 0 失败
+ */
+int etos_ed25519_sign(const unsigned char *msg, size_t msg_len,
+                      const unsigned char priv_key[ETOS_ED25519_PRIVATE_KEY_LEN],
+                      unsigned char sig[ETOS_ED25519_SIGNATURE_LEN]);
+
+/**
+ * @brief 使用 Ed25519 公钥验证数字签名
+ * @param msg 原始数据缓冲区
+ * @param msg_len 原始数据长度
+ * @param pub_key 32字节 Ed25519 公钥原始字节
+ * @param sig 64字节待验证的签名
+ * @return 0 验证通过，非 0 验证失败或参数错误
+ */
+int etos_ed25519_verify(const unsigned char *msg, size_t msg_len,
+                        const unsigned char pub_key[ETOS_ED25519_PUBLIC_KEY_LEN],
+                        const unsigned char sig[ETOS_ED25519_SIGNATURE_LEN]);
 
 #endif
