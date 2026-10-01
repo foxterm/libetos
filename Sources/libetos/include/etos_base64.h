@@ -3,6 +3,10 @@
 
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * Base64 编码
  * @param src 输入字符串/字节流
@@ -22,5 +26,9 @@ unsigned char *etos_base64_decode(const char *src, size_t *out_len);
  * 释放 Base64 模块分配的内存
  */
 void etos_base64_free(void *ptr);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* ETOS_BASE64_H */
