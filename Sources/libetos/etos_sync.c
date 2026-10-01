@@ -3,36 +3,37 @@
 #include <stdlib.h>
 
 // ---------------------------------------------------------
-// 1. 互斥锁实现 (Apple 平台)
+// 1. 互斥锁实现 (pthread_mutex)
 // ---------------------------------------------------------
 
 void etos_sync_mutex_init(etos_sync_mutex_t *m) {
   if (!m)
     return;
-  m->lock = OS_UNFAIR_LOCK_INIT;
+  pthread_mutex_init(&m->lock, NULL);
 }
 
 void etos_sync_mutex_lock(etos_sync_mutex_t *m) {
   if (!m)
     return;
-  os_unfair_lock_lock(&m->lock);
+  pthread_mutex_lock(&m->lock);
 }
 
 int etos_sync_mutex_trylock(etos_sync_mutex_t *m) {
   if (!m)
     return 0;
-  return os_unfair_lock_trylock(&m->lock) ? 1 : 0;
+  return (pthread_mutex_trylock(&m->lock) == 0) ? 1 : 0;
 }
 
 void etos_sync_mutex_unlock(etos_sync_mutex_t *m) {
   if (!m)
     return;
-  os_unfair_lock_unlock(&m->lock);
+  pthread_mutex_unlock(&m->lock);
 }
 
 void etos_sync_mutex_destroy(etos_sync_mutex_t *m) {
-  // os_unfair_lock 为值类型且无动态资源，Apple 平台无需销毁操作
-  (void)m;
+  if (!m)
+    return;
+  pthread_mutex_destroy(&m->lock);
 }
 
 // ---------------------------------------------------------
