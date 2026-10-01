@@ -1,9 +1,9 @@
 #include "etos_base64.h"
+#include <openssl/bio.h>
+#include <openssl/buffer.h>
+#include <openssl/evp.h>
 #include <stdlib.h>
 #include <string.h>
-
-static const char b64_table[] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 void etos_base64_free(void *ptr) {
   if (ptr) {
@@ -15,32 +15,32 @@ char *etos_base64_encode_bytes(const unsigned char *data, size_t len) {
   if (!data)
     return NULL;
 
-  size_t out_len = 4 * ((len + 2) / 3);
-  char *out = (char *)malloc(out_len + 1);
-  if (!out)
+  BIO *b64 = BIO_new(BIO_f_base64());
+  BIO *bio = BIO_new(BIO_s_mem());
+  if (!b64 || !bio) {
+    BIO_free_all(b64 ? b64 : bio);
     return NULL;
-
-  size_t i = 0, j = 0;
-  for (; i + 2 < len; i += 3) {
-    out[j++] = b64_table[(data[i] >> 2) & 0x3F];
-    out[j++] = b64_table[((data[i] & 0x03) << 4) | ((data[i + 1] >> 4) & 0x0F)];
-    out[j++] = b64_table[((data[i + 1] & 0x0F) << 2) | ((data[i + 2] >> 6) & 0x03)];
-    out[j++] = b64_table[data[i + 2] & 0x3F];
   }
 
-  if (i < len) {
-    out[j++] = b64_table[(data[i] >> 2) & 0x3F];
-    if (i + 1 == len) {
-      out[j++] = b64_table[(data[i] & 0x03) << 4];
-      out[j++] = '=';
-    } else {
-      out[j++] = b64_table[((data[i] & 0x03) << 4) | ((data[i + 1] >> 4) & 0x0F)];
-      out[j++] = b64_table[(data[i + 1] & 0x0F) << 2];
-    }
-    out[j++] = '=';
+  // 不插入换行符
+  BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+  bio = BIO_push(b64, bio);
+
+  if (BIO_write(bio, data, (int)len) <= 0 || BIO_flush(bio) <= 0) {
+    BIO_free_all(bio);
+    return NULL;
   }
 
-  out[j] = '\0';
+  BUF_MEM *bufferPtr;
+  BIO_get_mem_ptr(bio, &bufferPtr);
+
+  char *out = (char *)malloc(bufferPtr->length + 1);
+  if (out) {
+    memcpy(out, bufferPtr->data, bufferPtr->length);
+    out[bufferPtr->length] = '\0';
+  }
+
+  BIO_free_all(bio);
   return out;
 }
 
@@ -50,63 +50,44 @@ char *etos_base64_encode(const char *input) {
   return etos_base64_encode_bytes((const unsigned char *)input, strlen(input));
 }
 
-static int b64_char_value(char c) {
-  if (c >= 'A' && c <= 'Z')
-    return c - 'A';
-  if (c >= 'a' && c <= 'z')
-    return c - 'a' + 26;
-  if (c >= '0' && c <= '9')
-    return c - '0' + 52;
-  if (c == '+')
-    return 62;
-  if (c == '/')
-    return 63;
-  return -1;
-}
-
 unsigned char *etos_base64_decode(const char *input, size_t *out_len) {
   if (!input)
     return NULL;
 
   size_t len = strlen(input);
-  if (len % 4 != 0)
+  if (len == 0)
     return NULL;
 
-  size_t padding = 0;
-  if (len >= 1 && input[len - 1] == '=')
-    padding++;
-  if (len >= 2 && input[len - 2] == '=')
-    padding++;
-
-  size_t decoded_len = (len / 4) * 3 - padding;
-  unsigned char *out = (unsigned char *)malloc(decoded_len + 1);
-  if (!out)
+  BIO *b64 = BIO_new(BIO_f_base64());
+  BIO *bio = BIO_new_mem_buf((void *)input, (int)len);
+  if (!b64 || !bio) {
+    BIO_free_all(b64 ? b64 : bio);
     return NULL;
-
-  size_t i = 0, j = 0;
-  for (; i < len; i += 4) {
-    int v1 = b64_char_value(input[i]);
-    int v2 = b64_char_value(input[i + 1]);
-    int v3 = (input[i + 2] == '=') ? 0 : b64_char_value(input[i + 2]);
-    int v4 = (input[i + 3] == '=') ? 0 : b64_char_value(input[i + 3]);
-
-    if (v1 < 0 || v2 < 0 || (input[i + 2] != '=' && v3 < 0) || (input[i + 3] != '=' && v4 < 0)) {
-      free(out);
-      return NULL;
-    }
-
-    out[j++] = (unsigned char)((v1 << 2) | (v2 >> 4));
-    if (input[i + 2] != '=') {
-      out[j++] = (unsigned char)(((v2 & 0x0F) << 4) | (v3 >> 2));
-    }
-    if (input[i + 3] != '=') {
-      out[j++] = (unsigned char)(((v3 & 0x03) << 6) | v4);
-    }
   }
 
-  out[decoded_len] = '\0';
+  // 不期望换行符
+  BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+  bio = BIO_push(b64, bio);
+
+  // 分配最大可能的解密结果空间
+  size_t max_out_len = (len / 4) * 3 + 1;
+  unsigned char *out = (unsigned char *)malloc(max_out_len);
+  if (!out) {
+    BIO_free_all(bio);
+    return NULL;
+  }
+
+  int decoded_bytes = BIO_read(bio, out, (int)len);
+  BIO_free_all(bio);
+
+  if (decoded_bytes < 0) {
+    free(out);
+    return NULL;
+  }
+
+  out[decoded_bytes] = '\0';
   if (out_len) {
-    *out_len = decoded_len;
+    *out_len = (size_t)decoded_bytes;
   }
 
   return out;
