@@ -15,8 +15,6 @@
 extern "C" {
 #endif
 
-typedef int etos_socket_t;
-
 /* 代理类型定义 */
 #define ETOS_PROXY_NONE 0
 #define ETOS_PROXY_SOCKS5 1
