@@ -1,29 +1,17 @@
 #ifndef ETOS_SYNC_H
 #define ETOS_SYNC_H
 
+#include <os/lock.h>
 #include <pthread.h>
 #include <stdint.h>
 
 /* ------------------------------------------------------------
-   1. 互斥锁 (自动根据平台类型适配底层数据结构)
+   1. 互斥锁 (macOS / iOS 专属)
    ------------------------------------------------------------ */
 
-#if defined(__APPLE__)
-  #include <os/lock.h>
-  typedef struct {
-    os_unfair_lock lock;
-  } etos_sync_mutex_t;
-#elif defined(_WIN32)
-  #include <windows.h>
-  typedef struct {
-    CRITICAL_SECTION lock;
-  } etos_sync_mutex_t;
-#else
-  // Linux / BSD / Android / POSIX 平台
-  typedef struct {
-    pthread_mutex_t lock;
-  } etos_sync_mutex_t;
-#endif
+typedef struct {
+  os_unfair_lock lock;
+} etos_sync_mutex_t;
 
 /** 初始化互斥锁 */
 void etos_sync_mutex_init(etos_sync_mutex_t *m);
@@ -41,7 +29,7 @@ void etos_sync_mutex_unlock(etos_sync_mutex_t *m);
 void etos_sync_mutex_destroy(etos_sync_mutex_t *m);
 
 /* ------------------------------------------------------------
-   2. 等待组 (POSIX 条件变量，全平台兼容)
+   2. 等待组
    ------------------------------------------------------------ */
 
 typedef struct {
