@@ -22,7 +22,7 @@ void etos_sync_mutex_init(etos_sync_mutex_t *m);
 /** 加锁 */
 void etos_sync_mutex_lock(etos_sync_mutex_t *m);
 
-/** 尝试加锁 (成功返回 1/true，失败返回 0/false) */
+/** 尝试加锁 (成功返回 0/true) */
 int etos_sync_mutex_trylock(etos_sync_mutex_t *m);
 
 /** 解锁 */
