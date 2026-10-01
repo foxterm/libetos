@@ -11,4 +11,5 @@ Pod::Spec.new do |s|
   s.osx.deployment_target = "10.15"
   s.swift_version = '5.10'
   s.source_files = ['Sources/libetos/**/*.{h,c}']
+  s.dependency 'OpenSSL-Universal'
 end
