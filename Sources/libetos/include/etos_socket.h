@@ -1,25 +1,17 @@
 #ifndef ETOS_SOCKET_H
 #define ETOS_SOCKET_H
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
 
-// 操作系统类型与头文件兼容层
-#if defined(_WIN32)
-  #include <winsock2.h>
-  #include <ws2tcpip.h>
-  typedef SOCKET etos_socket_t;
-  typedef int ssize_t;
-#else
-  #include <sys/types.h>
-  #include <sys/socket.h>
-  #include <netinet/in.h>
-  #include <arpa/inet.h>
-  #include <unistd.h>
-  typedef int etos_socket_t;
-#endif
+typedef int etos_socket_t;
 
 /* 代理类型定义 */
 #define ETOS_PROXY_NONE 0
@@ -33,7 +25,7 @@
    网卡与 IP 映射数据结构
    ------------------------------------------------------------ */
 typedef struct {
-  char ifname[32]; /* 网卡名称，如 "en6" 或 "eth0" */
+  char ifname[32]; /* 网卡名称，如 "en0" */
   char ip[64];     /* 主 IP 地址(优先 IPv4，无 IPv4 则显示 IPv6) */
 } EtosInterfaceInfo;
 
@@ -55,10 +47,10 @@ typedef struct {
 } EtosIPAddr;
 
 /* ------------------------------------------------------------
-   网络 I/O 服务 (跨平台)
+   网络 I/O 服务 (macOS / iOS 专属)
    ------------------------------------------------------------ */
 
-/** 初始化网络环境(仅 Windows 下初始化 WSA，其他平台空操作) */
+/** 初始化网络环境 (macOS/iOS 下为空操作) */
 int etos_socket_init_env(void);
 
 /** 清理网络环境 */
