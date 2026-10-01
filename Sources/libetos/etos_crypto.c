@@ -119,3 +119,88 @@ cleanup:
   EVP_CIPHER_CTX_free(ctx);
   return ret;
 }
+
+int etos_ed25519_sign(const unsigned char *msg, size_t msg_len,
+                      const unsigned char priv_key[ETOS_ED25519_PRIVATE_KEY_LEN],
+                      unsigned char sig[ETOS_ED25519_SIGNATURE_LEN]) {
+  EVP_PKEY *pkey = NULL;
+  EVP_MD_CTX *md_ctx = NULL;
+  size_t sig_len = ETOS_ED25519_SIGNATURE_LEN;
+  int ret = ETOS_ERR_SIGN_FAILED;
+
+  if (!msg || msg_len == 0 || !priv_key || !sig) {
+    return ETOS_ERR_INVALID_PARAM;
+  }
+
+  /* 从 32 字节原始私钥加载 EVP_PKEY */
+  pkey = EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, NULL, priv_key, ETOS_ED25519_PRIVATE_KEY_LEN);
+  if (!pkey) {
+    return ETOS_ERR_INVALID_PARAM;
+  }
+
+  md_ctx = EVP_MD_CTX_new();
+  if (!md_ctx) {
+    EVP_PKEY_free(pkey);
+    return ETOS_ERR_ALLOC_FAILED;
+  }
+
+  /* Ed25519 的 Digest 初始化（在 EVP_DigestSignInit 中 digest 参数传 NULL） */
+  if (EVP_DigestSignInit(md_ctx, NULL, NULL, NULL, pkey) != 1) {
+    goto cleanup;
+  }
+
+  /* 计算签名（一步完成消息的传入与签名计算） */
+  if (EVP_DigestSign(md_ctx, sig, &sig_len, msg, msg_len) != 1) {
+    goto cleanup;
+  }
+
+  if (sig_len == ETOS_ED25519_SIGNATURE_LEN) {
+    ret = ETOS_OK;
+  }
+
+cleanup:
+  EVP_MD_CTX_free(md_ctx);
+  EVP_PKEY_free(pkey);
+  return ret;
+}
+
+int etos_ed25519_verify(const unsigned char *msg, size_t msg_len,
+                        const unsigned char pub_key[ETOS_ED25519_PUBLIC_KEY_LEN],
+                        const unsigned char sig[ETOS_ED25519_SIGNATURE_LEN]) {
+  EVP_PKEY *pkey = NULL;
+  EVP_MD_CTX *md_ctx = NULL;
+  int ret = ETOS_ERR_VERIFY_FAILED;
+
+  if (!msg || msg_len == 0 || !pub_key || !sig) {
+    return ETOS_ERR_INVALID_PARAM;
+  }
+
+  /* 从 32 字节原始公钥加载 EVP_PKEY */
+  pkey = EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, NULL, pub_key, ETOS_ED25519_PUBLIC_KEY_LEN);
+  if (!pkey) {
+    return ETOS_ERR_INVALID_PARAM;
+  }
+
+  md_ctx = EVP_MD_CTX_new();
+  if (!md_ctx) {
+    EVP_PKEY_free(pkey);
+    return ETOS_ERR_ALLOC_FAILED;
+  }
+
+  /* 初始化验证上下文 */
+  if (EVP_DigestVerifyInit(md_ctx, NULL, NULL, NULL, pkey) != 1) {
+    goto cleanup;
+  }
+
+  /* 执行签名校验 */
+  if (EVP_DigestVerify(md_ctx, sig, ETOS_ED25519_SIGNATURE_LEN, msg, msg_len) == 1) {
+    ret = ETOS_OK;
+  } else {
+    ret = ETOS_ERR_VERIFY_FAILED;
+  }
+
+cleanup:
+  EVP_MD_CTX_free(md_ctx);
+  EVP_PKEY_free(pkey);
+  return ret;
+}
