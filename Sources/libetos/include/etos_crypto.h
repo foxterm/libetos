@@ -20,7 +20,9 @@
 #define ETOS_ERR_AUTH_FAILED -5
 #define ETOS_ERR_SIGN_FAILED -6
 #define ETOS_ERR_VERIFY_FAILED -7
-
+#ifdef __cplusplus
+extern "C" {
+#endif
 /**
  * @brief 生成指定长度的强随机字节序列（常用于生成 Key 和 IV）
  * @param buf 输出缓冲区
@@ -86,5 +88,7 @@ int etos_ed25519_sign(const unsigned char *msg, size_t msg_len,
 int etos_ed25519_verify(const unsigned char *msg, size_t msg_len,
                         const unsigned char pub_key[ETOS_ED25519_PUBLIC_KEY_LEN],
                         const unsigned char sig[ETOS_ED25519_SIGNATURE_LEN]);
-
+#ifdef __cplusplus
+}
+#endif
 #endif
