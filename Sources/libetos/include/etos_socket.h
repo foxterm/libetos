@@ -11,6 +11,10 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef int etos_socket_t;
 
 /* 代理类型定义 */
@@ -120,5 +124,9 @@ int etos_socket_get_peer_info(int fd, char *ip_buf, size_t ip_buf_len, int *port
 
 /** 获取套接字的本地 (Client) IP 和端口 */
 int etos_socket_get_local_info(int fd, char *ip_buf, size_t ip_buf_len, int *port);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* ETOS_SOCKET_H */
