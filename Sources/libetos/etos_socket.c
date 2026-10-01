@@ -495,7 +495,7 @@ EtosInterfaceInfo *etos_socket_get_interface_infos(int *count) {
   return list;
 
 #else
-  // 100% 保持你原版的获取网卡逻辑
+  // 100% 保持原版的获取网卡逻辑
   struct ifaddrs *ifaddr = NULL;
   if (getifaddrs(&ifaddr) == -1) {
     return NULL;
