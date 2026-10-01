@@ -20,7 +20,7 @@ void etos_sync_mutex_lock(etos_sync_mutex_t *m) {
 
 int etos_sync_mutex_trylock(etos_sync_mutex_t *m) {
   if (!m)
-    return 0;
+    return -1;
   return pthread_mutex_trylock(&m->lock);
 }
 
