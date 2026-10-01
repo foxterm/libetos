@@ -21,7 +21,7 @@ void etos_sync_mutex_lock(etos_sync_mutex_t *m) {
 int etos_sync_mutex_trylock(etos_sync_mutex_t *m) {
   if (!m)
     return 0;
-  return (pthread_mutex_trylock(&m->lock) == 0) ? 1 : 0;
+  return pthread_mutex_trylock(&m->lock);
 }
 
 void etos_sync_mutex_unlock(etos_sync_mutex_t *m) {
