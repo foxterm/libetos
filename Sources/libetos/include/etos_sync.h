@@ -4,6 +4,10 @@
 #include <pthread.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* ------------------------------------------------------------
    1. 互斥锁 (pthread_mutex 实现)
    ------------------------------------------------------------ */
@@ -83,5 +87,9 @@ int64_t etos_sync_atomic_exchange(etos_sync_atomic_int64_t *addr, int64_t value)
 
 /** 原子比较交换 (CAS) */
 int64_t etos_sync_atomic_cas(etos_sync_atomic_int64_t *addr, int64_t expected, int64_t desired);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* ETOS_SYNC_H */
