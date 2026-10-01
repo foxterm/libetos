@@ -1,6 +1,6 @@
 # ETOS C/C++ 工具库 (ETOS Native Library)
 
-ETOS 是一个专为 C/C++ 及其上层语言封装（如 Swift/Objective-C 等）设计的底层跨平台工具库。它提供了基础内存缓存、加密解密、网络 Socket 管道、Socket 代理、同步原语与并发工具以及 Base64 编解码等高效核心模块。
+ETOS 是一个专为 FoxTerm.app 上层语言封装（Swift）设计的底层C库。它提供了基础内存缓存、加密解密、网络 Socket 管道、Socket 代理、同步原语与并发工具以及 Base64 编解码等高效核心模块。
 
 
 ## 模块概览
