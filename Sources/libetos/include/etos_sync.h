@@ -1,16 +1,15 @@
 #ifndef ETOS_SYNC_H
 #define ETOS_SYNC_H
 
-#include <os/lock.h>
 #include <pthread.h>
 #include <stdint.h>
 
 /* ------------------------------------------------------------
-   1. 互斥锁 (macOS / iOS 专属)
+   1. 互斥锁 (pthread_mutex 实现)
    ------------------------------------------------------------ */
 
 typedef struct {
-  os_unfair_lock lock;
+  pthread_mutex_t lock;
 } etos_sync_mutex_t;
 
 /** 初始化互斥锁 */
