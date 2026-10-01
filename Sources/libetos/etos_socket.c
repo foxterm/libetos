@@ -1,18 +1,6 @@
 #include "etos_socket.h"
 #include "etos_base64.h"
 
-#if defined(_WIN32)
-#define WIN32_LEAN_AND_MEAN
-#include <io.h>
-#include <iphlpapi.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#pragma comment(lib, "ws2_32.lib")
-#pragma comment(lib, "iphlpapi.lib")
-
-typedef int socklen_t;
-#define strncasecmp _strnicmp
-#else
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -25,7 +13,6 @@ typedef int socklen_t;
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
-#endif
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -33,30 +20,17 @@ typedef int socklen_t;
 #include <string.h>
 
 #ifndef ETOS_INVALID_SOCKET
-#if defined(_WIN32)
-#define ETOS_INVALID_SOCKET (SOCKET)(~0)
-#else
 #define ETOS_INVALID_SOCKET (-1)
-#endif
 #endif
 
 /* ------------------------------------------------------------
-   网络环境初始化 / 清理接口
+   网络环境初始化 / 清理接口 (Apple 平台下无需特殊操作)
    ------------------------------------------------------------ */
 int etos_socket_init_env(void) {
-#if defined(_WIN32)
-  WSADATA wsa;
-  if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-    return -1;
-  }
-#endif
   return 0;
 }
 
 void etos_socket_cleanup_env(void) {
-#if defined(_WIN32)
-  WSACleanup();
-#endif
 }
 
 /* ------------------------------------------------------------
@@ -155,38 +129,22 @@ static int connect_with_timeout(int fd, const struct sockaddr *addr, socklen_t a
   }
 
   int ret = connect(fd, addr, addrlen);
-#if defined(_WIN32)
-  if (ret < 0 && WSAGetLastError() != WSAEWOULDBLOCK) {
-    etos_socket_set_blocking(fd, true);
-    return -1;
-  }
-#else
   if (ret < 0 && errno != EINPROGRESS) {
     etos_socket_set_blocking(fd, true);
     return -1;
   }
-#endif
 
   if (ret == 0) {
     etos_socket_set_blocking(fd, true);
     return 0;
   }
 
-#if defined(_WIN32)
-  struct pollfd pfd;
-  pfd.fd = (SOCKET)fd;
-  pfd.events = POLLOUT | POLLIN;
-  pfd.revents = 0;
-
-  ret = WSAPoll(&pfd, 1, timeout_ms);
-#else
   struct pollfd pfd;
   pfd.fd = fd;
   pfd.events = POLLOUT | POLLIN;
   pfd.revents = 0;
 
   ret = poll(&pfd, 1, timeout_ms);
-#endif
 
   if (ret <= 0) {
     etos_socket_set_blocking(fd, true);
@@ -196,10 +154,8 @@ static int connect_with_timeout(int fd, const struct sockaddr *addr, socklen_t a
   int error = 0;
   socklen_t len = (socklen_t)sizeof(error);
   if (getsockopt(fd, SOL_SOCKET, SO_ERROR, (char *)&error, &len) < 0 || error != 0) {
-#if !defined(_WIN32)
     if (error != 0)
       errno = error;
-#endif
     etos_socket_set_blocking(fd, true);
     return -1;
   }
@@ -448,54 +404,6 @@ EtosInterfaceInfo *etos_socket_get_interface_infos(int *count) {
     return NULL;
   *count = 0;
 
-#if defined(_WIN32)
-  ULONG flags = GAA_FLAG_INCLUDE_PREFIX;
-  ULONG outBufLen = 15000;
-  PIP_ADAPTER_ADDRESSES pAddresses = (IP_ADAPTER_ADDRESSES *)malloc(outBufLen);
-  if (!pAddresses)
-    return NULL;
-
-  if (GetAdaptersAddresses(AF_UNSPEC, flags, NULL, pAddresses, &outBufLen) != ERROR_SUCCESS) {
-    free(pAddresses);
-    return NULL;
-  }
-
-  int capacity = 8, total = 0;
-  EtosInterfaceInfo *list = (EtosInterfaceInfo *)malloc(sizeof(EtosInterfaceInfo) * capacity);
-
-  for (PIP_ADAPTER_ADDRESSES pCurr = pAddresses; pCurr != NULL; pCurr = pCurr->Next) {
-    if (pCurr->OperStatus != IfOperStatusUp || pCurr->IfType == IF_TYPE_SOFTWARE_LOOPBACK)
-      continue;
-
-    for (PIP_ADAPTER_UNICAST_ADDRESS pUnicast = pCurr->FirstUnicastAddress; pUnicast != NULL; pUnicast = pUnicast->Next) {
-      char ip_str[64] = {0};
-      int family = pUnicast->Address.lpSockaddr->sa_family;
-      if (family == AF_INET) {
-        inet_ntop(AF_INET, &(((struct sockaddr_in *)pUnicast->Address.lpSockaddr)->sin_addr), ip_str, sizeof(ip_str));
-      } else if (family == AF_INET6) {
-        inet_ntop(AF_INET6, &(((struct sockaddr_in6 *)pUnicast->Address.lpSockaddr)->sin6_addr), ip_str, sizeof(ip_str));
-      } else {
-        continue;
-      }
-
-      if (total >= capacity) {
-        capacity *= 2;
-        list = (EtosInterfaceInfo *)realloc(list, sizeof(EtosInterfaceInfo) * capacity);
-      }
-
-      wcstombs(list[total].ifname, pCurr->FriendlyName, sizeof(list[total].ifname) - 1);
-      strncpy(list[total].ip, ip_str, sizeof(list[total].ip) - 1);
-      total++;
-      break;
-    }
-  }
-
-  free(pAddresses);
-  *count = total;
-  return list;
-
-#else
-  // 100% 保持原版的获取网卡逻辑
   struct ifaddrs *ifaddr = NULL;
   if (getifaddrs(&ifaddr) == -1) {
     return NULL;
@@ -582,7 +490,6 @@ EtosInterfaceInfo *etos_socket_get_interface_infos(int *count) {
   freeifaddrs(ifaddr);
   *count = total;
   return list;
-#endif
 }
 
 void etos_socket_free_interface_infos(EtosInterfaceInfo *infos) {
@@ -766,19 +673,11 @@ int etos_socket_connect_proxy(int type, const char *proxy_host, int proxy_port, 
 
 ssize_t etos_socket_send_timeout(int fd, const char *buf, size_t len, int flags, int timeout_ms) {
   if (timeout_ms > 0) {
-#if defined(_WIN32)
-    struct pollfd pfd;
-    pfd.fd = (SOCKET)fd;
-    pfd.events = POLLOUT;
-    pfd.revents = 0;
-    int ret = WSAPoll(&pfd, 1, timeout_ms);
-#else
     struct pollfd pfd;
     pfd.fd = fd;
     pfd.events = POLLOUT;
     pfd.revents = 0;
     int ret = poll(&pfd, 1, timeout_ms);
-#endif
     if (ret <= 0)
       return -ETIMEDOUT;
   }
@@ -787,19 +686,11 @@ ssize_t etos_socket_send_timeout(int fd, const char *buf, size_t len, int flags,
 
 ssize_t etos_socket_recv_timeout(int fd, char *buf, size_t len, int flags, int timeout_ms) {
   if (timeout_ms > 0) {
-#if defined(_WIN32)
-    struct pollfd pfd;
-    pfd.fd = (SOCKET)fd;
-    pfd.events = POLLIN;
-    pfd.revents = 0;
-    int ret = WSAPoll(&pfd, 1, timeout_ms);
-#else
     struct pollfd pfd;
     pfd.fd = fd;
     pfd.events = POLLIN;
     pfd.revents = 0;
     int ret = poll(&pfd, 1, timeout_ms);
-#endif
     if (ret <= 0)
       return -ETIMEDOUT;
   }
@@ -807,30 +698,22 @@ ssize_t etos_socket_recv_timeout(int fd, char *buf, size_t len, int flags, int t
 }
 
 ssize_t etos_socket_send(int fd, const char *buf, size_t len, int flags) {
-  return send(fd, buf, (int)len, flags);
+  return send(fd, buf, len, flags);
 }
 
 ssize_t etos_socket_recv(int fd, char *buf, size_t len, int flags) {
-  return recv(fd, buf, (int)len, flags);
+  return recv(fd, buf, len, flags);
 }
 
 int etos_socket_shutdown(int fd, int how) { return shutdown(fd, how); }
 
 void etos_socket_close(int fd) {
   if (fd >= 0) {
-#if defined(_WIN32)
-    closesocket(fd);
-#else
     close(fd);
-#endif
   }
 }
 
 int etos_socket_set_blocking(int fd, bool blocking) {
-#if defined(_WIN32)
-  u_long mode = blocking ? 0 : 1;
-  return ioctlsocket(fd, FIONBIO, &mode);
-#else
   int flags = fcntl(fd, F_GETFL, 0);
   if (flags < 0)
     return -1;
@@ -841,7 +724,6 @@ int etos_socket_set_blocking(int fd, bool blocking) {
     flags |= O_NONBLOCK;
   }
   return fcntl(fd, F_SETFL, flags);
-#endif
 }
 
 bool etos_socket_is_connect(int fd) {
@@ -849,18 +731,6 @@ bool etos_socket_is_connect(int fd) {
     return false;
 
   char buf;
-#if defined(_WIN32)
-  ssize_t res = recv(fd, &buf, 1, MSG_PEEK);
-  if (res == 0) {
-    return false;
-  }
-  if (res < 0) {
-    if (WSAGetLastError() == WSAEWOULDBLOCK) {
-      return true;
-    }
-    return false;
-  }
-#else
   ssize_t res = recv(fd, &buf, 1, MSG_PEEK | MSG_DONTWAIT);
   if (res == 0) {
     return false;
@@ -871,16 +741,11 @@ bool etos_socket_is_connect(int fd) {
     }
     return false;
   }
-#endif
   return true;
 }
 
 int etos_socket_last_error(void) {
-#if defined(_WIN32)
-  return WSAGetLastError();
-#else
   return errno;
-#endif
 }
 
 const char *etos_socket_strerror(int errnum) { return strerror(errnum); }
