@@ -144,12 +144,12 @@ int etos_ed25519_sign(const unsigned char *msg, size_t msg_len,
     return ETOS_ERR_ALLOC_FAILED;
   }
 
-  /* Ed25519 的 Digest 初始化（在 EVP_DigestSignInit 中 digest 参数传 NULL） */
+  /* Ed25519 的 Digest 初始化(在 EVP_DigestSignInit 中 digest 参数传 NULL) */
   if (EVP_DigestSignInit(md_ctx, NULL, NULL, NULL, pkey) != 1) {
     goto cleanup;
   }
 
-  /* 计算签名（一步完成消息的传入与签名计算） */
+  /* 计算签名(一步完成消息的传入与签名计算) */
   if (EVP_DigestSign(md_ctx, sig, &sig_len, msg, msg_len) != 1) {
     goto cleanup;
   }
