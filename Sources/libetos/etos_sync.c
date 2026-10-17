@@ -2,9 +2,9 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 
-// ---------------------------------------------------------
-// 1. 互斥锁实现 (pthread_mutex)
-// ---------------------------------------------------------
+/* ------------------------------------------------------------
+   1. 互斥锁 (pthread_mutex)
+   ------------------------------------------------------------ */
 
 void etos_sync_mutex_init(etos_sync_mutex_t *m) {
   if (!m)
@@ -36,9 +36,9 @@ void etos_sync_mutex_destroy(etos_sync_mutex_t *m) {
   pthread_mutex_destroy(&m->lock);
 }
 
-// ---------------------------------------------------------
-// 2. 等候组实现 (绝对防御，防负数崩溃，防销毁死锁)
-// ---------------------------------------------------------
+/* ------------------------------------------------------------
+   2. 等待组 (防御性实现：防负数崩溃、防销毁死锁)
+   ------------------------------------------------------------ */
 
 void etos_sync_waitgroup_init(etos_sync_waitgroup_t *wg) {
   if (!wg)
@@ -73,7 +73,6 @@ void etos_sync_waitgroup_done(etos_sync_waitgroup_t *wg) {
     return;
   pthread_mutex_lock(&wg->lock);
 
-  // 防御性扣减：哪怕没 add 或重复 done，也维持在 0，绝不崩溃
   if (wg->count > 0) {
     wg->count--;
     if (wg->count == 0) {
@@ -101,20 +100,18 @@ void etos_sync_waitgroup_destroy(etos_sync_waitgroup_t *wg) {
     return;
   pthread_mutex_lock(&wg->lock);
 
-  // 1. 先置 0 并唤醒潜在等待线程，避免死锁
   wg->count = 0;
   pthread_cond_broadcast(&wg->cv);
 
   pthread_mutex_unlock(&wg->lock);
 
-  // 2. 销毁 POSIX 对象
   pthread_mutex_destroy(&wg->lock);
   pthread_cond_destroy(&wg->cv);
 }
 
-// ---------------------------------------------------------
-// 3. 原子操作实现 (兼容 Swift 桥接 + 安全内存管理)
-// ---------------------------------------------------------
+/* ------------------------------------------------------------
+   3. 原子操作 (struct 封装 _Atomic 适配 Swift 桥接)
+   ------------------------------------------------------------ */
 
 etos_sync_atomic_int64_t *etos_sync_atomic_create(int64_t initial_value) {
   etos_sync_atomic_int64_t *ptr = (etos_sync_atomic_int64_t *)malloc(sizeof(etos_sync_atomic_int64_t));

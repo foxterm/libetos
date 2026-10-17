@@ -36,6 +36,8 @@ void etos_socket_cleanup_env(void) {
 /* ------------------------------------------------------------
    内部辅助函数
    ------------------------------------------------------------ */
+
+/** 去除 IPv6 地址两端的方括号 (如 "[::1]" → "::1") */
 static void etos_clean_host(const char *src, char *dst, size_t dst_len) {
   if (!src || !dst || dst_len == 0)
     return;
@@ -50,6 +52,7 @@ static void etos_clean_host(const char *src, char *dst, size_t dst_len) {
   }
 }
 
+/** macOS 下禁用 SIGPIPE 信号，防止向已关闭的 Socket 写入时进程崩溃 */
 static void set_nosigpipe(int fd) {
 #ifdef SO_NOSIGPIPE
   int optval = 1;
@@ -60,14 +63,14 @@ static void set_nosigpipe(int fd) {
 }
 
 /**
- * 绑定 Socket 到指定的网络接口 (支持网卡名如 "en0" 或本地 IP)
+ * 绑定 Socket 到指定的网络接口
+ * 优先尝试按网卡名 (如 "en0") 绑定，失败则按本地 IP 地址 bind
  */
 static int bind_to_interface(int fd, int family, const char *ifname_or_ip) {
   if (!ifname_or_ip || ifname_or_ip[0] == '\0') {
     return 0;
   }
 
-  // 1. 尝试作为网卡接口名处理(如 "en0", "en1")
 #if defined(IP_BOUND_IF) || defined(IPV6_BOUND_IF)
   unsigned int ifindex = if_nametoindex(ifname_or_ip);
   if (ifindex != 0) {
@@ -85,7 +88,6 @@ static int bind_to_interface(int fd, int family, const char *ifname_or_ip) {
   }
 #endif
 
-  // 2. 若非网卡名，尝试解析为本地 IP 地址并调用 bind
   if (family == AF_INET) {
     struct sockaddr_in local_addr;
     memset(&local_addr, 0, sizeof(local_addr));
@@ -105,6 +107,7 @@ static int bind_to_interface(int fd, int family, const char *ifname_or_ip) {
   return -1;
 }
 
+/** 循环读取直到收满 len 字节，用于代理协议握手 */
 static bool recv_exact(int fd, void *buf, size_t len, int timeout_ms) {
   size_t total_read = 0;
   char *ptr = (char *)buf;
@@ -119,6 +122,7 @@ static bool recv_exact(int fd, void *buf, size_t len, int timeout_ms) {
   return true;
 }
 
+/** 非阻塞 connect + poll 超时等待，连接成功后恢复阻塞模式 */
 static int connect_with_timeout(int fd, const struct sockaddr *addr, socklen_t addrlen, int timeout_ms) {
   if (timeout_ms <= 0) {
     return connect(fd, addr, addrlen);
@@ -141,7 +145,7 @@ static int connect_with_timeout(int fd, const struct sockaddr *addr, socklen_t a
 
   struct pollfd pfd;
   pfd.fd = fd;
-  pfd.events = POLLOUT | POLLIN;
+  pfd.events = POLLOUT;
   pfd.revents = 0;
 
   ret = poll(&pfd, 1, timeout_ms);
@@ -164,6 +168,7 @@ static int connect_with_timeout(int fd, const struct sockaddr *addr, socklen_t a
   return 0;
 }
 
+/** 从 sockaddr_storage 提取 IP 地址和端口号 */
 static int extract_sockaddr_info(const struct sockaddr_storage *addr, char *ip_buf, size_t ip_buf_len, int *port) {
   socklen_t buf_len = (socklen_t)ip_buf_len;
   if (addr->ss_family == AF_INET) {
@@ -184,6 +189,7 @@ static int extract_sockaddr_info(const struct sockaddr_storage *addr, char *ip_b
   return 0;
 }
 
+/** HTTP CONNECT 代理握手 (支持 Basic 认证) */
 static bool handshake_http_proxy(int fd, const char *target_host, int target_port, const char *user, const char *password, int timeout_ms) {
   if (!target_host || target_port <= 0 || target_port > 65535) {
     return false;
@@ -250,6 +256,7 @@ static bool handshake_http_proxy(int fd, const char *target_host, int target_por
   return false;
 }
 
+/** SOCKS5 代理握手 (支持用户名/密码认证) */
 static bool handshake_socks5_proxy(int fd, const char *target_host, int target_port, const char *user, const char *password, int timeout_ms) {
   if (!target_host || target_port <= 0 || target_port > 65535) {
     return false;
@@ -367,29 +374,22 @@ static bool handshake_socks5_proxy(int fd, const char *target_host, int target_p
   return true;
 }
 
+/** 判断网卡接口是否为虚拟/内置接口 (应过滤不展示给用户) */
 static bool is_ignored_interface(const char *name) {
   if (!name)
     return true;
 
-  // 常见的虚拟/系统内置接口前缀，在实际选网卡场景下无需暴露给用户
-  const char *ignore_prefixes[] = {
-      "lo",     // Loopback
-      "utun",   // VPN / Network Extension
-      "awdl",   // Apple Wireless Direct Link (AirDrop/HandOff)
-      "llw",    // Low Latency WLAN
-      "ap",     // Apple Access Point
-      "bridge", // Bridge Interface
-      "gif",    // Generic Tunnel Interface
-      "stf",    // 6to4 Tunneling
-      "p2p",    // Peer-to-Peer
-      "vnic"    // Virtual Network Interface
+  static const struct {
+    const char *prefix;
+    size_t len;
+  } ignored[] = {
+      {"lo", 2}, {"utun", 4}, {"awdl", 4}, {"llw", 3}, {"ap", 2},
+      {"bridge", 6}, {"gif", 3}, {"stf", 3}, {"p2p", 3}, {"vnic", 4},
   };
 
-  size_t count = sizeof(ignore_prefixes) / sizeof(ignore_prefixes[0]);
-  for (size_t i = 0; i < count; i++) {
-    size_t len = strlen(ignore_prefixes[i]);
-    if (strncmp(name, ignore_prefixes[i], len) == 0) {
-      return true; // 命中黑名单，跳过
+  for (size_t i = 0; i < sizeof(ignored) / sizeof(ignored[0]); i++) {
+    if (strncmp(name, ignored[i].prefix, ignored[i].len) == 0) {
+      return true;
     }
   }
 
@@ -421,12 +421,10 @@ EtosInterfaceInfo *etos_socket_get_interface_infos(int *count) {
     if (!ifa->ifa_name || !ifa->ifa_addr)
       continue;
 
-    // 1. 过滤状态未启用 (IFF_UP) 或 环回卡 (IFF_LOOPBACK)
     unsigned int flags = ifa->ifa_flags;
     if ((flags & IFF_UP) == 0 || (flags & IFF_LOOPBACK) != 0)
       continue;
 
-    // 2. 过滤虚拟/内部网卡 (如 utun, awdl, llw 等)
     if (is_ignored_interface(ifa->ifa_name))
       continue;
 
@@ -434,7 +432,6 @@ EtosInterfaceInfo *etos_socket_get_interface_infos(int *count) {
     if (family != AF_INET && family != AF_INET6)
       continue;
 
-    // 3. 解析 IP 地址
     char ip_str[INET6_ADDRSTRLEN] = {0};
     if (family == AF_INET) {
       inet_ntop(AF_INET, &(((struct sockaddr_in *)ifa->ifa_addr)->sin_addr), ip_str, sizeof(ip_str));
@@ -445,12 +442,10 @@ EtosInterfaceInfo *etos_socket_get_interface_infos(int *count) {
     if (ip_str[0] == '\0')
       continue;
 
-    // 去除 IPv6 Zone ID
     char *percent = strchr(ip_str, '%');
     if (percent)
       *percent = '\0';
 
-    // 4. 按网卡名称强行去重
     int existing_idx = -1;
     for (int i = 0; i < total; i++) {
       if (strcmp(list[i].ifname, ifa->ifa_name) == 0) {
@@ -460,7 +455,6 @@ EtosInterfaceInfo *etos_socket_get_interface_infos(int *count) {
     }
 
     if (existing_idx != -1) {
-      // 优先显示 IPv4 地址
       if (family == AF_INET) {
         strncpy(list[existing_idx].ip, ip_str, sizeof(list[existing_idx].ip) - 1);
         list[existing_idx].ip[sizeof(list[existing_idx].ip) - 1] = '\0';
@@ -620,7 +614,6 @@ int etos_socket_connect(const char *host, int port, int timeout_ms, const char *
 
     set_nosigpipe(fd);
 
-    /* 若指定了网卡参数，在 connect 前完成绑定 */
     if (ifname_or_ip && bind_to_interface(fd, rp->ai_family, ifname_or_ip) < 0) {
       etos_socket_close(fd);
       fd = ETOS_INVALID_SOCKET;
@@ -800,19 +793,19 @@ int etos_socket_get_traffic_stats(int fd, FdTrafficStats *stats) {
   return -1;
 }
 
-u_int64_t etos_stats_get_rx(const FdTrafficStats *stats) {
+uint64_t etos_stats_get_rx(const FdTrafficStats *stats) {
   if (!stats)
     return 0;
   return atomic_load(&stats->rx_bytes);
 }
 
-u_int64_t etos_stats_get_tx(const FdTrafficStats *stats) {
+uint64_t etos_stats_get_tx(const FdTrafficStats *stats) {
   if (!stats)
     return 0;
   return atomic_load(&stats->tx_bytes);
 }
 
-u_int32_t etos_stats_get_rtt(const FdTrafficStats *stats) {
+uint32_t etos_stats_get_rtt(const FdTrafficStats *stats) {
   if (!stats)
     return 0;
   return atomic_load(&stats->rtt_us);

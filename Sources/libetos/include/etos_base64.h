@@ -15,6 +15,14 @@ extern "C" {
 char *etos_base64_encode(const char *src);
 
 /**
+ * Base64 编码 (指定长度的原始字节流)
+ * @param data 输入字节流指针
+ * @param len 输入字节流长度
+ * @return 动态分配的 Base64 编码字符串，失败返回 NULL。用完后须调用 etos_base64_free 释放。
+ */
+char *etos_base64_encode_bytes(const unsigned char *data, size_t len);
+
+/**
  * Base64 解码
  * @param src Base64 编码字符串
  * @param out_len 输出解码后字节流的长度

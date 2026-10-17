@@ -11,6 +11,10 @@ void etos_base64_free(void *ptr) {
   }
 }
 
+/**
+ * 对指定长度的原始字节流进行 Base64 编码
+ * 使用 OpenSSL BIO 链实现，不插入换行符
+ */
 char *etos_base64_encode_bytes(const unsigned char *data, size_t len) {
   if (!data)
     return NULL;
@@ -22,7 +26,6 @@ char *etos_base64_encode_bytes(const unsigned char *data, size_t len) {
     return NULL;
   }
 
-  // 不插入换行符
   BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
   bio = BIO_push(b64, bio);
 
@@ -65,11 +68,9 @@ unsigned char *etos_base64_decode(const char *input, size_t *out_len) {
     return NULL;
   }
 
-  // 不期望换行符
   BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
   bio = BIO_push(b64, bio);
 
-  // 分配最大可能的解密结果空间
   size_t max_out_len = (len / 4) * 3 + 1;
   unsigned char *out = (unsigned char *)malloc(max_out_len);
   if (!out) {

@@ -20,6 +20,7 @@
 #define ETOS_ERR_AUTH_FAILED -5
 #define ETOS_ERR_SIGN_FAILED -6
 #define ETOS_ERR_VERIFY_FAILED -7
+
 #ifdef __cplusplus
 extern "C" {
 #endif

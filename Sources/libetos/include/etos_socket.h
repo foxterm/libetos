@@ -89,7 +89,7 @@ int etos_socket_connect_proxy(int type, const char *proxy_host, int proxy_port, 
 ssize_t etos_socket_send_timeout(int fd, const char *buf, size_t len, int flags, int timeout_ms);
 ssize_t etos_socket_recv_timeout(int fd, char *buf, size_t len, int flags, int timeout_ms);
 
-/** 原始数据收发 */
+/** 原始数据收发 (直接调用系统 send/recv) */
 ssize_t etos_socket_send(int fd, const char *buf, size_t len, int flags);
 ssize_t etos_socket_recv(int fd, char *buf, size_t len, int flags);
 

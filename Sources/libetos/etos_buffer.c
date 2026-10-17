@@ -11,7 +11,7 @@ etos_buffer_t *etos_buffer_create(size_t stride, size_t capacity) {
     return NULL;
 
   size_t total_size = stride * capacity;
-  buf->ptr = calloc(1, total_size); // 零初始化内存
+  buf->ptr = calloc(1, total_size);
   if (!buf->ptr) {
     free(buf);
     return NULL;
@@ -28,7 +28,6 @@ void etos_buffer_copy_bytes(const etos_buffer_t *buf, void *dest, size_t count) 
   if (!buf || !buf->ptr || !dest || count == 0)
     return;
 
-  // 边界保护：防止越界拷贝
   size_t copy_len = (count > buf->size) ? buf->size : count;
   memcpy(dest, buf->ptr, copy_len);
 }
