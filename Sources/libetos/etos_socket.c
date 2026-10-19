@@ -374,18 +374,26 @@ static bool handshake_socks5_proxy(int fd, const char *target_host, int target_p
   return true;
 }
 
+static const struct {
+  const char *prefix;
+  size_t len;
+} ignored[] = {
+    {"lo", 2},
+    {"utun", 4},
+    {"awdl", 4},
+    {"llw", 3},
+    {"ap", 2},
+    {"bridge", 6},
+    {"gif", 3},
+    {"stf", 3},
+    {"p2p", 3},
+    {"vnic", 4},
+};
+
 /** 判断网卡接口是否为虚拟/内置接口 (应过滤不展示给用户) */
 static bool is_ignored_interface(const char *name) {
   if (!name)
     return true;
-
-  static const struct {
-    const char *prefix;
-    size_t len;
-  } ignored[] = {
-      {"lo", 2}, {"utun", 4}, {"awdl", 4}, {"llw", 3}, {"ap", 2},
-      {"bridge", 6}, {"gif", 3}, {"stf", 3}, {"p2p", 3}, {"vnic", 4},
-  };
 
   for (size_t i = 0; i < sizeof(ignored) / sizeof(ignored[0]); i++) {
     if (strncmp(name, ignored[i].prefix, ignored[i].len) == 0) {
