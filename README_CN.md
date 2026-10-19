@@ -25,6 +25,18 @@ FoxTerm APP 专用底层 C 工具库，提供内存缓冲区、加密解密、�
 
 ## 安装
 
+### Swift Package Manager
+
+```swift
+.package(url: "https://github.com/foxterm/libetos.git", branch: "main"),
+```
+
+```swift
+.product(name: "libetos", package: "libetos"),
+```
+
+### CocoaPods
+
 ```ruby
 pod 'libetos', :git => 'https://github.com/foxterm/libetos.git'
 ```

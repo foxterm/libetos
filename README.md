@@ -25,6 +25,18 @@ A low-level C utility library built exclusively for the FoxTerm APP, providing c
 
 ## Installation
 
+### Swift Package Manager
+
+```swift
+.package(url: "https://github.com/foxterm/libetos.git", branch: "main"),
+```
+
+```swift
+.product(name: "libetos", package: "libetos"),
+```
+
+### CocoaPods
+
 ```ruby
 pod 'libetos', :git => 'https://github.com/foxterm/libetos.git'
 ```
