@@ -2,7 +2,7 @@
 
 FoxTerm APP 专用底层 C 工具库，提供内存缓冲区、加密解密、网络 Socket、同步原语及 Base64 编解码等核心能力，供上层 Swift 封装调用。
 
-> 本库为 [FoxTerm](https://foxterm.app/) APP 专用核心组件。如需使用完整功能，请下载 FoxTerm 客户端：[https://foxterm.app/](https://foxterm.app/)
+> 本库为 [FoxTerm](https://foxterm.app/) APP 专用核心组件，欢迎下载使用：[https://foxterm.app/](https://foxterm.app/)
 
 ## 模块
 
