@@ -1,81 +1,83 @@
 # libetos
 
-FoxTerm APP 专用底层 C 工具库，提供内存缓冲区、加密解密、网络 Socket、同步原语及 Base64 编解码等核心能力，供上层 Swift 封装调用。
+[English](README.md) | [中文文档](README_CN.md)
 
-> 本库为 [FoxTerm](https://foxterm.app/) APP 专用核心组件，欢迎下载使用：[https://foxterm.app/](https://foxterm.app/)
+A low-level C utility library built exclusively for the FoxTerm APP, providing core capabilities including memory buffers, encryption/decryption, networking sockets, synchronization primitives, and Base64 encoding/decoding — all designed to be wrapped and called from Swift.
 
-## 模块
+> This library is a dedicated core component for the [FoxTerm](https://foxterm.app/) APP. Feel free to download it here: [https://foxterm.app/](https://foxterm.app/)
 
-| 头文件 | 功能 |
-|--------|------|
-| `etos_buffer.h` | 结构化连续内存缓冲区，跨语言内存映射（Swift ↔ C） |
-| `etos_socket.h` | TCP Socket 连接（IPv4/IPv6）、代理连接、流量统计、KeepAlive、域名解析 |
-| `etos_sync.h` | 互斥锁（Mutex）、等待组（WaitGroup）、原子操作（Atomic Int64） |
-| `etos_crypto.h` | AES-256-GCM 加解密、Ed25519 签名验签、强随机数生成 |
-| `etos_base64.h` | Base64 编解码 |
+## Modules
 
-## 环境要求
+| Header File | Description |
+|-------------|-------------|
+| `etos_buffer.h` | Structured contiguous memory buffer with cross-language memory mapping (Swift ↔ C) |
+| `etos_socket.h` | TCP socket connections (IPv4/IPv6), proxy connections, traffic statistics, KeepAlive, DNS resolution |
+| `etos_sync.h` | Mutex locks, WaitGroups, atomic operations (Atomic Int64) |
+| `etos_crypto.h` | AES-256-GCM encryption/decryption, Ed25519 signing/verification, secure random number generation |
+| `etos_base64.h` | Base64 encoding and decoding |
 
-| 平台 | 最低版本 |
-|------|---------|
-| iOS  | 17.0    |
-| macOS | 14.0   |
+## Requirements
 
-## 安装
+| Platform | Minimum Version |
+|----------|-----------------|
+| iOS      | 17.0            |
+| macOS    | 14.0            |
+
+## Installation
 
 ```ruby
 pod 'libetos', :git => 'https://github.com/foxterm/libetos.git'
 ```
 
-### 依赖
+### Dependencies
 
 - OpenSSL-Universal
 
-## 核心 API
+## Core API
 
-### Socket 网络
+### Socket Networking
 
 ```c
-// TCP 连接（支持 IPv4/IPv6 自动解析，ifname_or_ip 可绑定网卡，传 NULL 跳过）
+// TCP connection (supports automatic IPv4/IPv6 resolution; ifname_or_ip can bind to a specific interface, pass NULL to skip)
 int fd = etos_socket_connect("example.com", 22, 5000, NULL);
 
-// 通过代理连接（SOCKS5 / HTTP CONNECT）
+// Connect via proxy (SOCKS5 / HTTP CONNECT)
 int fd = etos_socket_connect_proxy(ETOS_PROXY_SOCKS5,
     "proxy host", 1080, 5000,
     "target host", 22,
     "user", "password", NULL);
 
-// 带超时的 send/recv
+// send/recv with timeout
 etos_socket_send_timeout(fd, buf, len, 0, 3000);
 etos_socket_recv_timeout(fd, buf, len, 0, 3000);
 
-// 流量统计
+// Traffic statistics
 FdTrafficStats stats;
 etos_socket_get_traffic_stats(fd, &stats);
 uint64_t tx = etos_stats_get_tx(&stats);
 uint64_t rx = etos_stats_get_rx(&stats);
 uint32_t rtt = etos_stats_get_rtt(&stats);
 
-// 域名解析（获取所有 IPv4/IPv6 地址）
+// DNS resolution (retrieve all IPv4/IPv6 addresses)
 EtosIPAddr addrs[16];
 int count = etos_socket_resolve_all_ips("example.com", addrs, 16);
 
-// 网卡信息
+// Network interface info
 int count;
 EtosInterfaceInfo *infos = etos_socket_get_interface_infos(&count);
 etos_socket_free_interface_infos(infos);
 
-// TCP 选项
+// TCP options
 etos_socket_set_keepalive(fd, true, 60, 10, 3);
 etos_socket_set_nodelay(fd, true);
 
-// 连接状态与关闭
+// Connection status and shutdown
 bool connected = etos_socket_is_connect(fd);
 etos_socket_shutdown(fd, SHUT_RDWR);
 etos_socket_close(fd);
 ```
 
-### 内存缓冲区
+### Memory Buffer
 
 ```c
 etos_buffer_t *buf = etos_buffer_create(sizeof(char), 1024);
@@ -83,17 +85,17 @@ etos_buffer_copy_bytes(buf, dest, count);
 etos_buffer_free(buf);
 ```
 
-### 同步原语
+### Synchronization Primitives
 
 ```c
-// 互斥锁
+// Mutex
 etos_sync_mutex_t m;
 etos_sync_mutex_init(&m);
 etos_sync_mutex_lock(&m);
 etos_sync_mutex_unlock(&m);
 etos_sync_mutex_destroy(&m);
 
-// 等待组
+// WaitGroup
 etos_sync_waitgroup_t wg;
 etos_sync_waitgroup_init(&wg);
 etos_sync_waitgroup_add(&wg, 1);
@@ -101,7 +103,7 @@ etos_sync_waitgroup_done(&wg);
 etos_sync_waitgroup_wait(&wg);
 etos_sync_waitgroup_destroy(&wg);
 
-// 原子操作
+// Atomic operations
 etos_sync_atomic_int64_t *atom = etos_sync_atomic_create(0);
 etos_sync_atomic_add(atom, 10);
 etos_sync_atomic_sub(atom, 5);
@@ -112,17 +114,17 @@ etos_sync_atomic_cas(atom, 200, 300);
 etos_sync_atomic_free(atom);
 ```
 
-### 加密
+### Encryption
 
 ```c
-// AES-256-GCM 加密
+// AES-256-GCM encryption
 unsigned char key[32], iv[12], tag[16];
 etos_crypto_rand_bytes(key, 32);
 etos_crypto_rand_bytes(iv, 12);
 etos_aes_256_gcm_encrypt(plaintext, plen, key, iv, ciphertext, &clen, tag);
 etos_aes_256_gcm_decrypt(ciphertext, clen, tag, key, iv, out, &olen);
 
-// Ed25519 签名
+// Ed25519 signing
 etos_ed25519_sign(msg, msg_len, priv_key, sig);
 etos_ed25519_verify(msg, msg_len, pub_key, sig);
 ```
@@ -140,6 +142,6 @@ etos_base64_free(encoded);
 etos_base64_free(decoded);
 ```
 
-## 许可证
+## License
 
 MIT
