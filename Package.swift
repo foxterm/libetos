@@ -9,20 +9,20 @@ let package = Package(
         .macOS(.v14),
     ],
     products: [
-        .library(name: "libetos", targets: ["libetos"])
+        .library(name: "libetos", targets: ["libetos"]),
     ],
     dependencies: [
         .package(
             url: "https://github.com/krzyzanowskim/OpenSSL.git",
             from: "3.6.0001"
-        )
+        ),
     ],
     targets: [
         .target(
             name: "libetos",
             dependencies: [
-                .product(name: "OpenSSL", package: "OpenSSL")
+                .product(name: "OpenSSL", package: "OpenSSL"),
             ]
-        )
+        ),
     ]
 )
