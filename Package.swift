@@ -12,7 +12,7 @@ let package = Package(
         .library(name: "libetos", targets: ["libetos"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/krzyzanowskim/OpenSSL.git", .upToNextMinor(from: "3.6.5000")),
+        .package(url: "https://github.com/foxterm/OpenSSL.git", branch: "main"),
     ],
     targets: [
         .target(
