@@ -10,6 +10,7 @@ let package = Package(
     ],
     products: [
         .library(name: "libetos", targets: ["libetos"]),
+        .library(name: "OpenSSL", targets: ["OpenSSL"]),
     ],
     dependencies: [
         .package(
