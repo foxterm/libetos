@@ -43,7 +43,7 @@ pod 'libetos', :git => 'https://github.com/foxterm/libetos.git'
 
 ### Dependencies
 
-- OpenSSL-Universal
+- [OpenSSL](https://github.com/foxterm/OpenSSL)
 
 ## Core API
 
