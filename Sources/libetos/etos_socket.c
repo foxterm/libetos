@@ -389,7 +389,7 @@ static const struct {
     {"stf", 3},    // 隧道
     {"p2p", 3},    // 点对点
 #if TARGET_OS_IPHONE
-    {"pdp_ip", 6}, // 【iOS 专属】过滤蜂窝移动数据网卡
+    //{"pdp_ip", 6}, // 【iOS 专属】过滤蜂窝移动数据网卡
     {"ipsec", 5},  // 【iOS 专属】过滤 IPSec VPN 接口
 #else
     {"vnic", 4}, // 【macOS 专属】过滤虚拟机网卡
