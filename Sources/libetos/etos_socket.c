@@ -377,17 +377,18 @@ static bool handshake_socks5_proxy(int fd, const char *target_host, int target_p
 static const struct {
   const char *prefix;
   size_t len;
-} ignored[] = {
-    {"lo", 2},
-    {"utun", 4},
-    {"awdl", 4},
-    {"llw", 3},
-    {"ap", 2},
-    {"bridge", 6},
-    {"gif", 3},
-    {"stf", 3},
-    {"p2p", 3},
-    {"vnic", 4},
+} ignored_ios[] = {
+    {"lo", 2},     // 回环接口 (Loopback)
+    {"utun", 4},   // 用户空间隧道 (VPN、Wi-Fi Assist 等)
+    {"awdl", 4},   // 苹果无线直连 (AirDrop, AirPlay 等)
+    {"llw", 3},    // 低延迟无线局域网 (Low Latency WLAN)
+    {"ap", 2},     // 接入点接口 (个人热点/Access Point)
+    {"bridge", 6}, // 网桥接口
+    {"gif", 3},    // 通用隧道接口 (Generic Tunnel)
+    {"stf", 3},    // 6to4 隧道接口
+    {"p2p", 3},    // 点对点接口
+    {"pdp_ip", 6}, // 【iOS 专属】蜂窝移动数据网络接口 (Cellular 4G/5G)
+    {"ipsec", 5},  // IPsec 隧道接口
 };
 
 /** 判断网卡接口是否为虚拟/内置接口 (应过滤不展示给用户) */
