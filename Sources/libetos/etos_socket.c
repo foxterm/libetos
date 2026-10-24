@@ -14,6 +14,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#import <TargetConditionals.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -377,18 +378,23 @@ static bool handshake_socks5_proxy(int fd, const char *target_host, int target_p
 static const struct {
   const char *prefix;
   size_t len;
-} ignored_ios[] = {
-    {"lo", 2},     // 回环接口 (Loopback)
-    {"utun", 4},   // 用户空间隧道 (VPN、Wi-Fi Assist 等)
-    {"awdl", 4},   // 苹果无线直连 (AirDrop, AirPlay 等)
-    {"llw", 3},    // 低延迟无线局域网 (Low Latency WLAN)
-    {"ap", 2},     // 接入点接口 (个人热点/Access Point)
-    {"bridge", 6}, // 网桥接口
-    {"gif", 3},    // 通用隧道接口 (Generic Tunnel)
-    {"stf", 3},    // 6to4 隧道接口
-    {"p2p", 3},    // 点对点接口
-    {"pdp_ip", 6}, // 【iOS 专属】蜂窝移动数据网络接口 (Cellular 4G/5G)
-    {"ipsec", 5},  // IPsec 隧道接口
+} ignored[] = {
+    {"lo", 2},     // Loopback: 回环网卡 (如 lo0)
+    {"utun", 4},   // User Tunnel: 用户态隧道 (如 VPN、WireGuard、Tailscale)
+    {"awdl", 4},   // Apple Wireless Direct Link: 苹果无线直连 (AirDrop, AirPlay)
+    {"llw", 3},    // Low Latency WLAN: 低延迟局域网接口
+    {"ap", 2},     // Access Point: 个人热点 / 互联网共享接口 (如 ap1)
+    {"bridge", 6}, // Bridge: 网桥接口 (用于网络共享或虚拟化桥接)
+    {"gif", 3},    // Generic Tunnel: 通用隧道接口 (IPv6 over IPv4 等)
+    {"stf", 3},    // 6to4 Tunnel: 6to4 隧道接口
+    {"p2p", 3},    // Peer-to-Peer: 点对点专用接口
+#if TARGET_OS_IPHONE
+// 【iOS 平台专属处理】
+// {"pdp_ip", 6},
+#else
+    // 【macOS 平台专属处理】
+    {"vnic", 4}, // Virtual Network Interface: 虚拟机/本地虚拟网卡 (Parallels, VMware 等)
+#endif
 };
 
 /** 判断网卡接口是否为虚拟/内置接口 (应过滤不展示给用户) */
