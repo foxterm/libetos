@@ -379,21 +379,20 @@ static const struct {
   const char *prefix;
   size_t len;
 } ignored[] = {
-    {"lo", 2},     // Loopback: 回环网卡 (如 lo0)
-    {"utun", 4},   // User Tunnel: 用户态隧道 (如 VPN、WireGuard、Tailscale)
-    {"awdl", 4},   // Apple Wireless Direct Link: 苹果无线直连 (AirDrop, AirPlay)
-    {"llw", 3},    // Low Latency WLAN: 低延迟局域网接口
-    {"ap", 2},     // Access Point: 个人热点 / 互联网共享接口 (如 ap1)
-    {"bridge", 6}, // Bridge: 网桥接口 (用于网络共享或虚拟化桥接)
-    {"gif", 3},    // Generic Tunnel: 通用隧道接口 (IPv6 over IPv4 等)
-    {"stf", 3},    // 6to4 Tunnel: 6to4 隧道接口
-    {"p2p", 3},    // Peer-to-Peer: 点对点专用接口
+    {"lo", 2},     // 回环
+    {"utun", 4},   // VPN 隧道
+    {"awdl", 4},   // 苹果无线直连
+    {"llw", 3},    // 低延迟局域网
+    {"ap", 2},     // 个人热点
+    {"bridge", 6}, // 网桥
+    {"gif", 3},    // 隧道
+    {"stf", 3},    // 隧道
+    {"p2p", 3},    // 点对点
 #if TARGET_OS_IPHONE
-// 【iOS 平台专属处理】
-// {"pdp_ip", 6},
+    {"pdp_ip", 6}, // 【iOS 专属】过滤蜂窝移动数据网卡
+    {"ipsec", 5},  // 【iOS 专属】过滤 IPSec VPN 接口
 #else
-    // 【macOS 平台专属处理】
-    {"vnic", 4}, // Virtual Network Interface: 虚拟机/本地虚拟网卡 (Parallels, VMware 等)
+    {"vnic", 4}, // 【macOS 专属】过滤虚拟机网卡
 #endif
 };
 
