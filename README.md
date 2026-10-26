@@ -2,7 +2,7 @@
 
 [English](README.md) | [中文文档](README_CN.md)
 
-A low-level C utility library built exclusively for the FoxTerm APP, providing core capabilities including memory buffers, encryption/decryption, networking sockets, synchronization primitives, and Base64 encoding/decoding — all designed to be wrapped and called from Swift.
+A low-level C utility library built exclusively for the FoxTerm APP, providing core capabilities including memory buffers, encryption/decryption, networking sockets, synchronization primitives, Base64 encoding/decoding, and Wake-on-LAN — all designed to be wrapped and called from Swift.
 
 > This library is a dedicated core component for the [FoxTerm](https://foxterm.app/) APP. Feel free to download it here: [https://foxterm.app/](https://foxterm.app/)
 
@@ -15,6 +15,7 @@ A low-level C utility library built exclusively for the FoxTerm APP, providing c
 | `etos_sync.h` | Mutex locks, WaitGroups, atomic operations (Atomic Int64) |
 | `etos_crypto.h` | AES-256-GCM encryption/decryption, Ed25519 signing/verification, secure random number generation |
 | `etos_base64.h` | Base64 encoding and decoding |
+| `etos_wol.h` | Wake-on-LAN magic packet construction and sending (UDP broadcast) |
 
 ## Requirements
 
@@ -152,6 +153,31 @@ unsigned char *decoded = etos_base64_decode(encoded, &out_len);
 
 etos_base64_free(encoded);
 etos_base64_free(decoded);
+```
+
+### Wake-on-LAN (WOL)
+
+```c
+// Parse MAC address string (supports ":" or "-" separator)
+EtosMACAddr mac;
+etos_wol_parse_mac("AA:BB:CC:DD:EE:FF", &mac);
+
+// Send to a specific broadcast address
+etos_wol_send(&mac, "192.168.1.255", NULL);
+
+// Quick send with MAC string (broadcast to 255.255.255.255)
+etos_wol_send_str("AA:BB:CC:DD:EE:FF", NULL, NULL);
+
+// Send to all local subnet broadcast addresses (auto-detect interfaces)
+etos_wol_send_all(&mac, NULL);
+
+// Custom options
+EtosWOLOptions opts = etos_wol_default_options();
+opts.port = 7;                // use port 7 instead of default 9
+opts.bind_ifname = "en0";     // bind to specific interface
+opts.repeat_count = 3;        // send 3 times
+opts.interval_ms = 200;       // 200ms between each send
+etos_wol_send_all(&mac, &opts);
 ```
 
 ## License

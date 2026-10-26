@@ -2,7 +2,7 @@
 
 [English](README.md) | [中文文档](README_CN.md)
 
-FoxTerm APP 专用底层 C 工具库，提供内存缓冲区、加密解密、网络 Socket、同步原语及 Base64 编解码等核心能力，供上层 Swift 封装调用。
+FoxTerm APP 专用底层 C 工具库，提供内存缓冲区、加密解密、网络 Socket、同步原语、Base64 编解码及网络唤醒（Wake-on-LAN）等核心能力，供上层 Swift 封装调用。
 
 > 本库为 [FoxTerm](https://foxterm.app/) APP 专用核心组件，欢迎下载使用：[https://foxterm.app/](https://foxterm.app/)
 
@@ -15,6 +15,7 @@ FoxTerm APP 专用底层 C 工具库，提供内存缓冲区、加密解密、�
 | `etos_sync.h` | 互斥锁（Mutex）、等待组（WaitGroup）、原子操作（Atomic Int64） |
 | `etos_crypto.h` | AES-256-GCM 加解密、Ed25519 签名验签、强随机数生成 |
 | `etos_base64.h` | Base64 编解码 |
+| `etos_wol.h` | Wake-on-LAN 魔法包构造与发送（UDP 广播） |
 
 ## 环境要求
 
@@ -152,6 +153,31 @@ unsigned char *decoded = etos_base64_decode(encoded, &out_len);
 
 etos_base64_free(encoded);
 etos_base64_free(decoded);
+```
+
+### 网络唤醒 (WOL)
+
+```c
+// 解析 MAC 地址字符串（支持 ":" 或 "-" 分隔）
+EtosMACAddr mac;
+etos_wol_parse_mac("AA:BB:CC:DD:EE:FF", &mac);
+
+// 向指定广播地址发送
+etos_wol_send(&mac, "192.168.1.255", NULL);
+
+// 字符串便捷接口（默认广播到 255.255.255.255）
+etos_wol_send_str("AA:BB:CC:DD:EE:FF", NULL, NULL);
+
+// 向所有本地子网广播地址发送（自动检测网卡）
+etos_wol_send_all(&mac, NULL);
+
+// 自定义选项
+EtosWOLOptions opts = etos_wol_default_options();
+opts.port = 7;                // 使用端口 7 而非默认的 9
+opts.bind_ifname = "en0";     // 绑定到指定网卡
+opts.repeat_count = 3;        // 发送 3 次
+opts.interval_ms = 200;       // 每次间隔 200ms
+etos_wol_send_all(&mac, &opts);
 ```
 
 ## 许可证
