@@ -19,24 +19,12 @@
 #include <time.h>
 
 /* ------------------------------------------------------------
-   内部常量
+   内部常量与结构定义
    ------------------------------------------------------------ */
 #define ICMP_PAYLOAD_SIZE 56
 #define ICMP_HEADER_SIZE 8
 #define ICMP_TOTAL_SIZE (ICMP_HEADER_SIZE + ICMP_PAYLOAD_SIZE)
 
-/* ICMP 类型定义 */
-#ifndef ICMP_TIME_EXCEEDED
-#define ICMP_TIME_EXCEEDED 11
-#endif
-
-#ifndef ICMP_DEST_UNREACH
-#define ICMP_DEST_UNREACH 3
-#endif
-
-/* ------------------------------------------------------------
-   ICMP 头部结构
-   ------------------------------------------------------------ */
 typedef struct {
   uint8_t type;
   uint8_t code;
@@ -46,7 +34,7 @@ typedef struct {
 } EtosICMPHeader;
 
 /* ------------------------------------------------------------
-   内部辅助函数 (Ping 相关)
+   内部辅助函数
    ------------------------------------------------------------ */
 
 static uint16_t icmp_compute_checksum(const void *data, size_t len) {
@@ -101,7 +89,7 @@ static int icmp_payload_offset(const uint8_t *buf, ssize_t len, int family) {
     return (ihl >= 20 && ihl <= 60) ? ihl : 20;
   }
   if (family == AF_INET6 && (buf[0] >> 4) == 6) {
-    return 40; /* IPv6 固定头长度 */
+    return 40;
   }
   return 0;
 }
@@ -119,17 +107,12 @@ static bool icmp_is_self_echo(const uint8_t *icmp, int family, int identifier, i
          ntohs(hdr->sequence) == (uint16_t)seq;
 }
 
-static int set_ttl_ipv4(int fd, int ttl) {
-  return setsockopt(fd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
-}
+/* ------------------------------------------------------------
+   Ping 实现 (IPv4 / IPv6)
+   ------------------------------------------------------------ */
 
-static int set_ttl_ipv6(int fd, int hoplimit) {
-  return setsockopt(fd, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &hoplimit, sizeof(hoplimit));
-}
-
-/** 执行 IPv4 ICMP Echo */
 static int icmp_echo_ipv4(int fd, const struct sockaddr_in *dest, int seq, int identifier,
-                          int timeout_ms, int ttl, EtosICMPResult *result) {
+                          int timeout_ms, EtosICMPResult *result) {
   uint8_t packet[ICMP_TOTAL_SIZE];
   memset(packet, 0, sizeof(packet));
 
@@ -145,10 +128,6 @@ static int icmp_echo_ipv4(int fd, const struct sockaddr_in *dest, int seq, int i
   memcpy(packet + ICMP_HEADER_SIZE, &time_us, sizeof(time_us));
 
   hdr->checksum = icmp_compute_checksum(packet, sizeof(packet));
-
-  // if (ttl > 0) {
-  //   set_ttl_ipv4(fd, ttl);
-  // }
 
   ssize_t sent = sendto(fd, packet, sizeof(packet), 0, (struct sockaddr *)dest, sizeof(*dest));
   if (sent < 0) {
@@ -185,10 +164,7 @@ static int icmp_echo_ipv4(int fd, const struct sockaddr_in *dest, int seq, int i
 
     int hdr_offset = icmp_payload_offset(recv_buf, received, AF_INET);
     if (received < hdr_offset + ICMP_HEADER_SIZE) {
-      result->success = false;
-      result->error_code = EMSGSIZE;
-      result->rtt_ms = -1;
-      return -1;
+      continue;
     }
 
     double recv_time = icmp_get_time_ms();
@@ -199,15 +175,6 @@ static int icmp_echo_ipv4(int fd, const struct sockaddr_in *dest, int seq, int i
     }
 
     if (reply->type == ICMP_ECHOREPLY || reply->type == ICMP_TIME_EXCEEDED || reply->type == ICMP_DEST_UNREACH) {
-      if (reply->type == ICMP_ECHOREPLY) {
-        if (ntohs(reply->identifier) != identifier || ntohs(reply->sequence) != seq) {
-          result->success = false;
-          result->error_code = ESRCH;
-          result->rtt_ms = -1;
-          return -1;
-        }
-      }
-
       inet_ntop(AF_INET, &from.sin_addr, result->ip, sizeof(result->ip));
       result->family = AF_INET;
       result->success = true;
@@ -220,34 +187,16 @@ static int icmp_echo_ipv4(int fd, const struct sockaddr_in *dest, int seq, int i
         result->ttl = recv_buf[8];
       }
 
-      if (reply->type == ICMP_ECHOREPLY) {
-        uint64_t orig_time_us = 0;
-        if (received >= hdr_offset + ICMP_HEADER_SIZE + (ssize_t)sizeof(orig_time_us)) {
-          memcpy(&orig_time_us, recv_buf + hdr_offset + ICMP_HEADER_SIZE, sizeof(orig_time_us));
-          double orig_time_ms = orig_time_us / 1000.0;
-          result->rtt_ms = recv_time - orig_time_ms;
-          if (result->rtt_ms < 0)
-            result->rtt_ms = 0;
-        } else {
-          result->rtt_ms = recv_time - send_time;
-        }
-      } else {
-        result->rtt_ms = recv_time - send_time;
-      }
+      result->rtt_ms = recv_time - send_time;
+      if (result->rtt_ms < 0) result->rtt_ms = 0;
 
       return (reply->type == ICMP_ECHOREPLY) ? 1 : 0;
     }
-
-    result->success = false;
-    result->error_code = EPROTONOSUPPORT;
-    result->rtt_ms = -1;
-    return -1;
   }
 }
 
-/** 执行 IPv6 ICMP Echo */
 static int icmp_echo_ipv6(int fd, const struct sockaddr_in6 *dest, int seq, int identifier,
-                          int timeout_ms, int ttl, EtosICMPResult *result) {
+                          int timeout_ms, EtosICMPResult *result) {
   uint8_t packet[ICMP_TOTAL_SIZE];
   memset(packet, 0, sizeof(packet));
 
@@ -261,10 +210,6 @@ static int icmp_echo_ipv6(int fd, const struct sockaddr_in6 *dest, int seq, int 
   double send_time = icmp_get_time_ms();
   uint64_t time_us = (uint64_t)(send_time * 1000.0);
   memcpy(packet + sizeof(struct icmp6_hdr), &time_us, sizeof(time_us));
-
-  // if (ttl > 0) {
-  //   set_ttl_ipv6(fd, ttl);
-  // }
 
   ssize_t sent = sendto(fd, packet, sizeof(packet), 0, (struct sockaddr *)dest, sizeof(*dest));
   if (sent < 0) {
@@ -301,10 +246,7 @@ static int icmp_echo_ipv6(int fd, const struct sockaddr_in6 *dest, int seq, int 
 
     int hdr_offset = icmp_payload_offset(recv_buf, received, AF_INET6);
     if (received < hdr_offset + (ssize_t)sizeof(struct icmp6_hdr)) {
-      result->success = false;
-      result->error_code = EMSGSIZE;
-      result->rtt_ms = -1;
-      return -1;
+      continue;
     }
 
     double recv_time = icmp_get_time_ms();
@@ -316,15 +258,6 @@ static int icmp_echo_ipv6(int fd, const struct sockaddr_in6 *dest, int seq, int 
 
     if (reply->icmp6_type == ICMP6_ECHO_REPLY || reply->icmp6_type == ICMP6_TIME_EXCEEDED ||
         reply->icmp6_type == ICMP6_DST_UNREACH) {
-      if (reply->icmp6_type == ICMP6_ECHO_REPLY) {
-        if (ntohs(reply->icmp6_id) != identifier || ntohs(reply->icmp6_seq) != seq) {
-          result->success = false;
-          result->error_code = ESRCH;
-          result->rtt_ms = -1;
-          return -1;
-        }
-      }
-
       inet_ntop(AF_INET6, &from.sin6_addr, result->ip, sizeof(result->ip));
       result->family = AF_INET6;
       result->success = true;
@@ -337,33 +270,16 @@ static int icmp_echo_ipv6(int fd, const struct sockaddr_in6 *dest, int seq, int 
         result->ttl = recv_buf[7];
       }
 
-      if (reply->icmp6_type == ICMP6_ECHO_REPLY) {
-        uint64_t orig_time_us = 0;
-        if (received >= hdr_offset + (ssize_t)sizeof(struct icmp6_hdr) + (ssize_t)sizeof(orig_time_us)) {
-          memcpy(&orig_time_us, recv_buf + hdr_offset + sizeof(struct icmp6_hdr), sizeof(orig_time_us));
-          double orig_time_ms = orig_time_us / 1000.0;
-          result->rtt_ms = recv_time - orig_time_ms;
-          if (result->rtt_ms < 0)
-            result->rtt_ms = 0;
-        } else {
-          result->rtt_ms = recv_time - send_time;
-        }
-      } else {
-        result->rtt_ms = recv_time - send_time;
-      }
+      result->rtt_ms = recv_time - send_time;
+      if (result->rtt_ms < 0) result->rtt_ms = 0;
 
       return (reply->icmp6_type == ICMP6_ECHO_REPLY) ? 1 : 0;
     }
-
-    result->success = false;
-    result->error_code = EPROTONOSUPPORT;
-    result->rtt_ms = -1;
-    return -1;
   }
 }
 
 /* ------------------------------------------------------------
-   Traceroute 内部实现：使用 UDP 套接字（绕过沙盒中 ICMP 设置 TTL 的权限限制）
+   Traceroute 实现：UDP + connect() 绑定（兼容 macOS/iOS 沙盒及内核事件分发）
    ------------------------------------------------------------ */
 
 static int traceroute_hop_ipv4(const struct sockaddr_in *dest, int ttl, int timeout_ms, EtosICMPResult *result) {
@@ -379,6 +295,7 @@ static int traceroute_hop_ipv4(const struct sockaddr_in *dest, int ttl, int time
   setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof(nosigpipe));
 #endif
 
+  /* 沙盒允许修改 UDP 的 TTL */
   if (setsockopt(fd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl)) < 0) {
     result->success = false;
     result->error_code = errno;
@@ -386,17 +303,20 @@ static int traceroute_hop_ipv4(const struct sockaddr_in *dest, int ttl, int time
     return -1;
   }
 
-  struct timeval tv;
-  tv.tv_sec = timeout_ms / 1000;
-  tv.tv_usec = (timeout_ms % 1000) * 1000;
-  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-
   struct sockaddr_in target = *dest;
   target.sin_port = htons(33434 + ttl);
 
+  /* 核心：在 macOS/BSD 中，必须 connect UDP 套接字才能捕获异步 ICMP 超时返回 */
+  if (connect(fd, (struct sockaddr *)&target, sizeof(target)) < 0) {
+    result->success = false;
+    result->error_code = errno;
+    close(fd);
+    return -1;
+  }
+
   double send_time = icmp_get_time_ms();
   char payload = 0;
-  ssize_t sent = sendto(fd, &payload, 1, 0, (struct sockaddr *)&target, sizeof(target));
+  ssize_t sent = send(fd, &payload, 1, 0);
   if (sent < 0) {
     result->success = false;
     result->error_code = errno;
@@ -406,8 +326,10 @@ static int traceroute_hop_ipv4(const struct sockaddr_in *dest, int ttl, int time
 
   struct pollfd pfd;
   pfd.fd = fd;
-  pfd.events = POLLIN;
+  pfd.events = POLLIN | POLLERR;
   int poll_result = poll(&pfd, 1, timeout_ms);
+
+  double recv_time = icmp_get_time_ms();
 
   if (poll_result <= 0) {
     result->success = false;
@@ -419,30 +341,26 @@ static int traceroute_hop_ipv4(const struct sockaddr_in *dest, int ttl, int time
 
   struct sockaddr_in from;
   socklen_t from_len = sizeof(from);
-  uint8_t recv_buf[512];
-  ssize_t received = recvfrom(fd, recv_buf, sizeof(recv_buf), 0, (struct sockaddr *)&from, &from_len);
-  double recv_time = icmp_get_time_ms();
+  char dummy;
+  ssize_t recved = recvfrom(fd, &dummy, 1, 0, (struct sockaddr *)&from, &from_len);
   close(fd);
 
-  if (received < 0) {
-    result->success = false;
-    result->error_code = errno;
-    result->rtt_ms = -1;
-    return -1;
-  }
-
-  inet_ntop(AF_INET, &from.sin_addr, result->ip, sizeof(result->ip));
-  result->family = AF_INET;
+  result->rtt_ms = recv_time - send_time;
+  if (result->rtt_ms < 0) result->rtt_ms = 0;
   result->success = true;
   result->seq = ttl;
   result->error_code = 0;
-  result->rtt_ms = recv_time - send_time;
-  if (result->rtt_ms < 0) result->rtt_ms = 0;
 
-  if (from.sin_addr.s_addr == dest->sin_addr.s_addr) {
-    return 1;
+  /* 判断是中间路由器超时还是到达目标 */
+  if (recved < 0 || from.sin_addr.s_addr == 0 || from.sin_addr.s_addr == dest->sin_addr.s_addr) {
+    inet_ntop(AF_INET, &dest->sin_addr, result->ip, sizeof(result->ip));
+    result->family = AF_INET;
+    return 1; // 到达目标
+  } else {
+    inet_ntop(AF_INET, &from.sin_addr, result->ip, sizeof(result->ip));
+    result->family = AF_INET;
+    return 0; // 中间跳
   }
-  return 0;
 }
 
 static int traceroute_hop_ipv6(const struct sockaddr_in6 *dest, int ttl, int timeout_ms, EtosICMPResult *result) {
@@ -465,17 +383,19 @@ static int traceroute_hop_ipv6(const struct sockaddr_in6 *dest, int ttl, int tim
     return -1;
   }
 
-  struct timeval tv;
-  tv.tv_sec = timeout_ms / 1000;
-  tv.tv_usec = (timeout_ms % 1000) * 1000;
-  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-
   struct sockaddr_in6 target = *dest;
   target.sin6_port = htons(33434 + ttl);
 
+  if (connect(fd, (struct sockaddr *)&target, sizeof(target)) < 0) {
+    result->success = false;
+    result->error_code = errno;
+    close(fd);
+    return -1;
+  }
+
   double send_time = icmp_get_time_ms();
   char payload = 0;
-  ssize_t sent = sendto(fd, &payload, 1, 0, (struct sockaddr *)&target, sizeof(target));
+  ssize_t sent = send(fd, &payload, 1, 0);
   if (sent < 0) {
     result->success = false;
     result->error_code = errno;
@@ -485,8 +405,10 @@ static int traceroute_hop_ipv6(const struct sockaddr_in6 *dest, int ttl, int tim
 
   struct pollfd pfd;
   pfd.fd = fd;
-  pfd.events = POLLIN;
+  pfd.events = POLLIN | POLLERR;
   int poll_result = poll(&pfd, 1, timeout_ms);
+
+  double recv_time = icmp_get_time_ms();
 
   if (poll_result <= 0) {
     result->success = false;
@@ -498,30 +420,25 @@ static int traceroute_hop_ipv6(const struct sockaddr_in6 *dest, int ttl, int tim
 
   struct sockaddr_in6 from;
   socklen_t from_len = sizeof(from);
-  uint8_t recv_buf[512];
-  ssize_t received = recvfrom(fd, recv_buf, sizeof(recv_buf), 0, (struct sockaddr *)&from, &from_len);
-  double recv_time = icmp_get_time_ms();
+  char dummy;
+  ssize_t recved = recvfrom(fd, &dummy, 1, 0, (struct sockaddr *)&from, &from_len);
   close(fd);
 
-  if (received < 0) {
-    result->success = false;
-    result->error_code = errno;
-    result->rtt_ms = -1;
-    return -1;
-  }
-
-  inet_ntop(AF_INET6, &from.sin6_addr, result->ip, sizeof(result->ip));
-  result->family = AF_INET6;
+  result->rtt_ms = recv_time - send_time;
+  if (result->rtt_ms < 0) result->rtt_ms = 0;
   result->success = true;
   result->seq = ttl;
   result->error_code = 0;
-  result->rtt_ms = recv_time - send_time;
-  if (result->rtt_ms < 0) result->rtt_ms = 0;
 
-  if (IN6_ARE_ADDR_EQUAL(&from.sin6_addr, &dest->sin6_addr)) {
+  if (recved < 0 || IN6_ARE_ADDR_EQUAL(&from.sin6_addr, &dest->sin6_addr)) {
+    inet_ntop(AF_INET6, &dest->sin6_addr, result->ip, sizeof(result->ip));
+    result->family = AF_INET6;
     return 1;
+  } else {
+    inet_ntop(AF_INET6, &from.sin6_addr, result->ip, sizeof(result->ip));
+    result->family = AF_INET6;
+    return 0;
   }
-  return 0;
 }
 
 /* ------------------------------------------------------------
@@ -568,9 +485,9 @@ int etos_icmp_echo(const char *host, int timeout_ms, EtosICMPResult *result) {
 
   int ret;
   if (family == AF_INET6) {
-    ret = icmp_echo_ipv6(fd, (struct sockaddr_in6 *)&dest_addr, seq, identifier, timeout_ms, 0, result);
+    ret = icmp_echo_ipv6(fd, (struct sockaddr_in6 *)&dest_addr, seq, identifier, timeout_ms, result);
   } else {
-    ret = icmp_echo_ipv4(fd, (struct sockaddr_in *)&dest_addr, seq, identifier, timeout_ms, 0, result);
+    ret = icmp_echo_ipv4(fd, (struct sockaddr_in *)&dest_addr, seq, identifier, timeout_ms, result);
   }
 
   close(fd);
