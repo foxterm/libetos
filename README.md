@@ -2,7 +2,7 @@
 
 [English](README.md) | [中文文档](README_CN.md)
 
-A low-level C utility library built exclusively for the FoxTerm APP, providing core capabilities including memory buffers, encryption/decryption, networking sockets, synchronization primitives, Base64 encoding/decoding, Wake-on-LAN, Ping, and Traceroute — all designed to be wrapped and called from Swift.
+A low-level C utility library built exclusively for the FoxTerm APP, providing core capabilities including memory buffers, encryption/decryption, networking sockets, synchronization primitives, Base64 encoding/decoding, Wake-on-LAN, and ICMP diagnostics (Ping/Traceroute) — all designed to be wrapped and called from Swift.
 
 > This library is a dedicated core component for the [FoxTerm](https://foxterm.app/) APP. Feel free to download it here: [https://foxterm.app/](https://foxterm.app/)
 
@@ -16,8 +16,7 @@ A low-level C utility library built exclusively for the FoxTerm APP, providing c
 | `etos_crypto.h` | AES-256-GCM encryption/decryption, Ed25519 signing/verification, secure random number generation |
 | `etos_base64.h` | Base64 encoding and decoding |
 | `etos_wol.h` | Wake-on-LAN magic packet construction and sending (UDP broadcast) |
-| `etos_ping.h` | ICMP Ping (IPv4/IPv6), continuous ping with statistics |
-| `etos_traceroute.h` | Traceroute (IPv4/IPv6), hop-by-hop path discovery |
+| `etos_icmp.h` | ICMP diagnostics: single Echo (Ping) and Traceroute hop (IPv4/IPv6, sandbox-compliant) |
 
 ## Requirements
 
@@ -182,66 +181,43 @@ opts.interval_ms = 200;       // 200ms between each send
 etos_wol_send_all(&mac, &opts);
 ```
 
-### Ping (ICMP Echo)
+### ICMP Diagnostics (Ping & Traceroute)
 
 ```c
-// Single ping
-EtosPingResult result;
-etos_ping("example.com", 3000, &result);
+// Single Ping (returns immediately, caller controls looping)
+EtosICMPResult result;
+etos_icmp_echo("example.com", 3000, &result);
 if (result.success) {
     printf("Reply from %s: time=%.2fms\n", result.ip, result.rtt_ms);
+} else {
+    printf("Error: %s\n", etos_icmp_strerror(result.error_code));
 }
 
-// Ping with statistics (10 pings, 1 second interval)
-EtosPingStats stats;
-etos_ping_stats("example.com", 10, 1000, 3000, &stats);
-printf("Sent: %d, Received: %d, Loss: %.1f%%\n",
-       stats.packets_sent, stats.packets_received,
-       etos_ping_get_loss_rate(&stats));
-printf("RTT min/avg/max: %.2f/%.2f/%.2f ms\n",
-       stats.min_rtt_ms, stats.avg_rtt_ms, stats.max_rtt_ms);
-
-// Continuous ping with callback
-void on_ping(const EtosPingResult *result, void *context) {
-    if (result->success) {
-        printf("Reply from %s: time=%.2fms\n", result->ip, result->rtt_ms);
-    } else {
-        printf("Request timeout\n");
+// Continuous Ping (caller-controlled loop)
+for (int i = 0; i < 10; i++) {
+    EtosICMPResult r;
+    etos_icmp_echo("example.com", 3000, &r);
+    if (r.success) {
+        printf("seq=%d time=%.2fms\n", i + 1, r.rtt_ms);
     }
+    sleep(1); // 1 second interval
 }
-etos_ping_continuous("example.com", 0 /* infinite */, 1000, 3000, on_ping, NULL, NULL);
-```
 
-### Traceroute
-
-```c
-// Traceroute (blocking, returns all hops)
-EtosTracerouteHop hops[30];
-int hop_count;
-etos_traceroute("example.com", 30, 3000, hops, &hop_count);
-
-for (int i = 0; i < hop_count; i++) {
-    if (hops[i].reached) {
-        printf("%2d  %s  %.2f ms\n", hops[i].hop, hops[i].ip, hops[i].rtt_ms);
+// Single Traceroute hop (returns immediately, caller controls TTL)
+int ttl = 1;
+while (ttl <= 30) {
+    EtosICMPResult hop;
+    int ret = etos_icmp_traceroute_hop("example.com", ttl, 3000, &hop);
+    
+    if (hop.success) {
+        printf("%2d  %s  %.2f ms\n", ttl, hop.ip, hop.rtt_ms);
     } else {
-        printf("%2d  * * *\n", hops[i].hop);
+        printf("%2d  * * *\n", ttl);
     }
+    
+    if (ret == 1) break; // Reached target
+    ttl++;
 }
-
-// Check if we reached the target
-if (etos_traceroute_reached_target(hops, hop_count, "example.com")) {
-    printf("Target reached!\n");
-}
-
-// Traceroute with callback (async style)
-void on_hop(const EtosTracerouteHop *hop, void *context) {
-    if (hop->reached) {
-        printf("%2d  %s  %.2f ms\n", hop->hop, hop->ip, hop->rtt_ms);
-    } else {
-        printf("%2d  * * *\n", hop->hop);
-    }
-}
-etos_traceroute_async("example.com", 30, 3000, on_hop, NULL);
 ```
 
 ## License
