@@ -2,7 +2,7 @@
 
 [English](README.md) | [中文文档](README_CN.md)
 
-A low-level C utility library built exclusively for the FoxTerm APP, providing core capabilities including memory buffers, encryption/decryption, networking sockets, synchronization primitives, Base64 encoding/decoding, and Wake-on-LAN — all designed to be wrapped and called from Swift.
+A low-level C utility library built exclusively for the FoxTerm APP, providing core capabilities including memory buffers, encryption/decryption, networking sockets, synchronization primitives, Base64 encoding/decoding, Wake-on-LAN, Ping, and Traceroute — all designed to be wrapped and called from Swift.
 
 > This library is a dedicated core component for the [FoxTerm](https://foxterm.app/) APP. Feel free to download it here: [https://foxterm.app/](https://foxterm.app/)
 
@@ -16,6 +16,8 @@ A low-level C utility library built exclusively for the FoxTerm APP, providing c
 | `etos_crypto.h` | AES-256-GCM encryption/decryption, Ed25519 signing/verification, secure random number generation |
 | `etos_base64.h` | Base64 encoding and decoding |
 | `etos_wol.h` | Wake-on-LAN magic packet construction and sending (UDP broadcast) |
+| `etos_ping.h` | ICMP Ping (IPv4/IPv6), continuous ping with statistics |
+| `etos_traceroute.h` | Traceroute (IPv4/IPv6), hop-by-hop path discovery |
 
 ## Requirements
 
@@ -178,6 +180,68 @@ opts.bind_ifname = "en0";     // bind to specific interface
 opts.repeat_count = 3;        // send 3 times
 opts.interval_ms = 200;       // 200ms between each send
 etos_wol_send_all(&mac, &opts);
+```
+
+### Ping (ICMP Echo)
+
+```c
+// Single ping
+EtosPingResult result;
+etos_ping("example.com", 3000, &result);
+if (result.success) {
+    printf("Reply from %s: time=%.2fms\n", result.ip, result.rtt_ms);
+}
+
+// Ping with statistics (10 pings, 1 second interval)
+EtosPingStats stats;
+etos_ping_stats("example.com", 10, 1000, 3000, &stats);
+printf("Sent: %d, Received: %d, Loss: %.1f%%\n",
+       stats.packets_sent, stats.packets_received,
+       etos_ping_get_loss_rate(&stats));
+printf("RTT min/avg/max: %.2f/%.2f/%.2f ms\n",
+       stats.min_rtt_ms, stats.avg_rtt_ms, stats.max_rtt_ms);
+
+// Continuous ping with callback
+void on_ping(const EtosPingResult *result, void *context) {
+    if (result->success) {
+        printf("Reply from %s: time=%.2fms\n", result->ip, result->rtt_ms);
+    } else {
+        printf("Request timeout\n");
+    }
+}
+etos_ping_continuous("example.com", 0 /* infinite */, 1000, 3000, on_ping, NULL, NULL);
+```
+
+### Traceroute
+
+```c
+// Traceroute (blocking, returns all hops)
+EtosTracerouteHop hops[30];
+int hop_count;
+etos_traceroute("example.com", 30, 3000, hops, &hop_count);
+
+for (int i = 0; i < hop_count; i++) {
+    if (hops[i].reached) {
+        printf("%2d  %s  %.2f ms\n", hops[i].hop, hops[i].ip, hops[i].rtt_ms);
+    } else {
+        printf("%2d  * * *\n", hops[i].hop);
+    }
+}
+
+// Check if we reached the target
+if (etos_traceroute_reached_target(hops, hop_count, "example.com")) {
+    printf("Target reached!\n");
+}
+
+// Traceroute with callback (async style)
+void on_hop(const EtosTracerouteHop *hop, void *context) {
+    if (hop->reached) {
+        printf("%2d  %s  %.2f ms\n", hop->hop, hop->ip, hop->rtt_ms);
+    } else {
+        printf("%2d  * * *\n", hop->hop);
+    }
+}
+etos_traceroute_async("example.com", 30, 3000, on_hop, NULL);
 ```
 
 ## License

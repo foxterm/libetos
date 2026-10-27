@@ -2,7 +2,7 @@
 
 [English](README.md) | [中文文档](README_CN.md)
 
-FoxTerm APP 专用底层 C 工具库，提供内存缓冲区、加密解密、网络 Socket、同步原语、Base64 编解码及网络唤醒（Wake-on-LAN）等核心能力，供上层 Swift 封装调用。
+FoxTerm APP 专用底层 C 工具库，提供内存缓冲区、加密解密、网络 Socket、同步原语、Base64 编解码、网络唤醒（Wake-on-LAN）、Ping 及 Traceroute 等核心能力，供上层 Swift 封装调用。
 
 > 本库为 [FoxTerm](https://foxterm.app/) APP 专用核心组件，欢迎下载使用：[https://foxterm.app/](https://foxterm.app/)
 
@@ -16,6 +16,8 @@ FoxTerm APP 专用底层 C 工具库，提供内存缓冲区、加密解密、�
 | `etos_crypto.h` | AES-256-GCM 加解密、Ed25519 签名验签、强随机数生成 |
 | `etos_base64.h` | Base64 编解码 |
 | `etos_wol.h` | Wake-on-LAN 魔法包构造与发送（UDP 广播） |
+| `etos_ping.h` | ICMP Ping（IPv4/IPv6），连续 Ping 与统计 |
+| `etos_traceroute.h` | Traceroute 路由追踪（IPv4/IPv6），逐跳路径发现 |
 
 ## 环境要求
 
@@ -178,6 +180,68 @@ opts.bind_ifname = "en0";     // 绑定到指定网卡
 opts.repeat_count = 3;        // 发送 3 次
 opts.interval_ms = 200;       // 每次间隔 200ms
 etos_wol_send_all(&mac, &opts);
+```
+
+### Ping（ICMP Echo）
+
+```c
+// 单次 Ping
+EtosPingResult result;
+etos_ping("example.com", 3000, &result);
+if (result.success) {
+    printf("来自 %s 的回复: 时间=%.2fms\n", result.ip, result.rtt_ms);
+}
+
+// 带统计的 Ping（10 次，间隔 1 秒）
+EtosPingStats stats;
+etos_ping_stats("example.com", 10, 1000, 3000, &stats);
+printf("发送: %d, 接收: %d, 丢包率: %.1f%%\n",
+       stats.packets_sent, stats.packets_received,
+       etos_ping_get_loss_rate(&stats));
+printf("RTT 最小/平均/最大: %.2f/%.2f/%.2f ms\n",
+       stats.min_rtt_ms, stats.avg_rtt_ms, stats.max_rtt_ms);
+
+// 带回调的连续 Ping
+void on_ping(const EtosPingResult *result, void *context) {
+    if (result->success) {
+        printf("来自 %s 的回复: 时间=%.2fms\n", result->ip, result->rtt_ms);
+    } else {
+        printf("请求超时\n");
+    }
+}
+etos_ping_continuous("example.com", 0 /* 无限 */, 1000, 3000, on_ping, NULL, NULL);
+```
+
+### Traceroute（路由追踪）
+
+```c
+// Traceroute（阻塞式，返回所有跳）
+EtosTracerouteHop hops[30];
+int hop_count;
+etos_traceroute("example.com", 30, 3000, hops, &hop_count);
+
+for (int i = 0; i < hop_count; i++) {
+    if (hops[i].reached) {
+        printf("%2d  %s  %.2f ms\n", hops[i].hop, hops[i].ip, hops[i].rtt_ms);
+    } else {
+        printf("%2d  * * *\n", hops[i].hop);
+    }
+}
+
+// 检查是否到达目标
+if (etos_traceroute_reached_target(hops, hop_count, "example.com")) {
+    printf("已到达目标！\n");
+}
+
+// 带回调的 Traceroute（异步风格）
+void on_hop(const EtosTracerouteHop *hop, void *context) {
+    if (hop->reached) {
+        printf("%2d  %s  %.2f ms\n", hop->hop, hop->ip, hop->rtt_ms);
+    } else {
+        printf("%2d  * * *\n", hop->hop);
+    }
+}
+etos_traceroute_async("example.com", 30, 3000, on_hop, NULL);
 ```
 
 ## 许可证
