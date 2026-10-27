@@ -93,6 +93,43 @@ static int icmp_resolve_host(const char *host, struct sockaddr_storage *addr, in
   return 0;
 }
 
+/**
+ * 计算接收缓冲区中 ICMP 报文相对缓冲区起始的偏移。
+ * macOS 的 IPv4 ICMP socket 在接收时会附带完整的 IP 头，
+ * 解析 ICMP 头之前需要先跳过；IPv6 ICMPv6 socket 通常不附带
+ * IPv6 头，此处仅在检测到真实 IP 头时返回对应长度。
+ */
+static int icmp_payload_offset(const uint8_t *buf, ssize_t len, int family) {
+  if (len <= 0)
+    return 0;
+  if (family == AF_INET && (buf[0] >> 4) == 4) {
+    int ihl = (buf[0] & 0x0F) * 4;
+    return (ihl >= 20 && ihl <= 60) ? ihl : 20;
+  }
+  if (family == AF_INET6 && (buf[0] >> 4) == 6) {
+    return 40; /* IPv6 固定头长度 */
+  }
+  return 0;
+}
+
+/**
+ * 判断收到的包是否为自身发出的 Echo Request。
+ * macOS 在部分场景（如 IPv6 loopback）会把刚发出的 Echo Request
+ * 回环到同一个 socket，需要跳过并继续等待真正的响应。
+ */
+static bool icmp_is_self_echo(const uint8_t *icmp, int family, int identifier, int seq) {
+  if (family == AF_INET6) {
+    const struct icmp6_hdr *hdr = (const struct icmp6_hdr *)icmp;
+    return hdr->icmp6_type == ICMP6_ECHO_REQUEST &&
+           ntohs(hdr->icmp6_id) == (uint16_t)identifier &&
+           ntohs(hdr->icmp6_seq) == (uint16_t)seq;
+  }
+  const EtosICMPHeader *hdr = (const EtosICMPHeader *)icmp;
+  return hdr->type == ICMP_ECHO &&
+         ntohs(hdr->identifier) == (uint16_t)identifier &&
+         ntohs(hdr->sequence) == (uint16_t)seq;
+}
+
 /** 设置 IPv4 socket 的 TTL */
 static int set_ttl_ipv4(int fd, int ttl) {
   return setsockopt(fd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
@@ -136,77 +173,103 @@ static int icmp_echo_ipv4(int fd, const struct sockaddr_in *dest, int seq, int i
     return -1;
   }
 
-  /* 等待响应 */
-  struct pollfd pfd;
-  pfd.fd = fd;
-  pfd.events = POLLIN;
-  int poll_result = poll(&pfd, 1, timeout_ms);
-
-  if (poll_result <= 0) {
-    result->success = false;
-    result->error_code = (poll_result == 0) ? ETIMEDOUT : errno;
-    result->rtt_ms = -1;
-    return -1;
-  }
-
-  /* 接收响应 */
+  /* 等待并接收响应：跳过自身回显的 Echo Request，直到收到有效响应 */
   uint8_t recv_buf[ETOS_ICMP_MAX_PACKET_SIZE];
   struct sockaddr_in from;
-  socklen_t from_len = sizeof(from);
-  ssize_t received = recvfrom(fd, recv_buf, sizeof(recv_buf), 0, (struct sockaddr *)&from, &from_len);
 
-  if (received < ICMP_HEADER_SIZE) {
+  for (;;) {
+    struct pollfd pfd;
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    int poll_result = poll(&pfd, 1, timeout_ms);
+
+    if (poll_result <= 0) {
+      result->success = false;
+      result->error_code = (poll_result == 0) ? ETIMEDOUT : errno;
+      result->rtt_ms = -1;
+      return -1;
+    }
+
+    /* 接收响应 */
+    socklen_t from_len = sizeof(from);
+    ssize_t received = recvfrom(fd, recv_buf, sizeof(recv_buf), 0, (struct sockaddr *)&from, &from_len);
+
+    if (received < 0) {
+      result->success = false;
+      result->error_code = errno;
+      result->rtt_ms = -1;
+      return -1;
+    }
+
+    /* macOS 的 IPv4 ICMP socket 会附带 IP 头，先跳过 */
+    int hdr_offset = icmp_payload_offset(recv_buf, received, AF_INET);
+    if (received < hdr_offset + ICMP_HEADER_SIZE) {
+      result->success = false;
+      result->error_code = EMSGSIZE;
+      result->rtt_ms = -1;
+      return -1;
+    }
+
+    double recv_time = icmp_get_time_ms();
+
+    /* 解析响应 */
+    EtosICMPHeader *reply = (EtosICMPHeader *)(recv_buf + hdr_offset);
+
+    /* 跳过自身回显的 Echo Request */
+    if (icmp_is_self_echo((const uint8_t *)reply, AF_INET, identifier, seq)) {
+      continue;
+    }
+
+    /* 检查是否为 Echo Reply 或 Time Exceeded */
+    if (reply->type == ICMP_ECHOREPLY || reply->type == ICMP_TIME_EXCEEDED || reply->type == ICMP_DEST_UNREACH) {
+      /* 对于 Echo Reply，验证 identifier 和 sequence */
+      if (reply->type == ICMP_ECHOREPLY) {
+        if (ntohs(reply->identifier) != identifier || ntohs(reply->sequence) != seq) {
+          result->success = false;
+          result->error_code = ESRCH;
+          result->rtt_ms = -1;
+          return -1;
+        }
+      }
+
+      /* 提取 IP 地址 */
+      inet_ntop(AF_INET, &from.sin_addr, result->ip, sizeof(result->ip));
+      result->family = AF_INET;
+      result->success = true;
+      result->icmp_type = reply->type;
+      result->seq = seq;
+      result->identifier = identifier;
+      result->error_code = 0;
+
+      /* 回复 TTL（macOS 附带的 IP 头中，TTL 位于偏移 8） */
+      if (hdr_offset > 0 && received >= hdr_offset + ICMP_HEADER_SIZE) {
+        result->ttl = recv_buf[8];
+      }
+
+      /* 计算 RTT：Echo Reply 使用包内时间戳，错误响应使用收发时刻差 */
+      if (reply->type == ICMP_ECHOREPLY) {
+        uint64_t orig_time_us = 0;
+        if (received >= hdr_offset + ICMP_HEADER_SIZE + (ssize_t)sizeof(orig_time_us)) {
+          memcpy(&orig_time_us, recv_buf + hdr_offset + ICMP_HEADER_SIZE, sizeof(orig_time_us));
+          double orig_time_ms = orig_time_us / 1000.0;
+          result->rtt_ms = recv_time - orig_time_ms;
+          if (result->rtt_ms < 0)
+            result->rtt_ms = 0;
+        } else {
+          result->rtt_ms = recv_time - send_time;
+        }
+      } else {
+        result->rtt_ms = recv_time - send_time;
+      }
+
+      return (reply->type == ICMP_ECHOREPLY) ? 1 : 0;
+    }
+
     result->success = false;
-    result->error_code = EMSGSIZE;
+    result->error_code = EPROTONOSUPPORT;
     result->rtt_ms = -1;
     return -1;
   }
-
-  double recv_time = icmp_get_time_ms();
-
-  /* 解析响应 */
-  EtosICMPHeader *reply = (EtosICMPHeader *)recv_buf;
-
-  /* 检查是否为 Echo Reply 或 Time Exceeded */
-  if (reply->type == ICMP_ECHOREPLY || reply->type == ICMP_TIME_EXCEEDED || reply->type == ICMP_DEST_UNREACH) {
-    /* 对于 Echo Reply，验证 identifier 和 sequence */
-    if (reply->type == ICMP_ECHOREPLY) {
-      if (ntohs(reply->identifier) != identifier || ntohs(reply->sequence) != seq) {
-        result->success = false;
-        result->error_code = ESRCH;
-        result->rtt_ms = -1;
-        return -1;
-      }
-    }
-
-    /* 提取 IP 地址 */
-    inet_ntop(AF_INET, &from.sin_addr, result->ip, sizeof(result->ip));
-    result->family = AF_INET;
-    result->success = true;
-    result->icmp_type = reply->type;
-    result->seq = seq;
-    result->identifier = identifier;
-    result->error_code = 0;
-
-    /* 计算 RTT */
-    uint64_t orig_time_us = 0;
-    if (received >= (ssize_t)(ICMP_HEADER_SIZE + sizeof(orig_time_us))) {
-      memcpy(&orig_time_us, recv_buf + ICMP_HEADER_SIZE, sizeof(orig_time_us));
-      double orig_time_ms = orig_time_us / 1000.0;
-      result->rtt_ms = recv_time - orig_time_ms;
-      if (result->rtt_ms < 0)
-        result->rtt_ms = 0;
-    } else {
-      result->rtt_ms = recv_time - send_time;
-    }
-
-    return (reply->type == ICMP_ECHOREPLY) ? 1 : 0;
-  }
-
-  result->success = false;
-  result->error_code = EPROTONOSUPPORT;
-  result->rtt_ms = -1;
-  return -1;
 }
 
 /** 执行 IPv6 ICMP Echo */
@@ -240,78 +303,104 @@ static int icmp_echo_ipv6(int fd, const struct sockaddr_in6 *dest, int seq, int 
     return -1;
   }
 
-  /* 等待响应 */
-  struct pollfd pfd;
-  pfd.fd = fd;
-  pfd.events = POLLIN;
-  int poll_result = poll(&pfd, 1, timeout_ms);
-
-  if (poll_result <= 0) {
-    result->success = false;
-    result->error_code = (poll_result == 0) ? ETIMEDOUT : errno;
-    result->rtt_ms = -1;
-    return -1;
-  }
-
-  /* 接收响应 */
+  /* 等待并接收响应：跳过自身回显的 Echo Request，直到收到有效响应 */
   uint8_t recv_buf[ETOS_ICMP_MAX_PACKET_SIZE];
   struct sockaddr_in6 from;
-  socklen_t from_len = sizeof(from);
-  ssize_t received = recvfrom(fd, recv_buf, sizeof(recv_buf), 0, (struct sockaddr *)&from, &from_len);
 
-  if (received < (ssize_t)sizeof(struct icmp6_hdr)) {
+  for (;;) {
+    struct pollfd pfd;
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    int poll_result = poll(&pfd, 1, timeout_ms);
+
+    if (poll_result <= 0) {
+      result->success = false;
+      result->error_code = (poll_result == 0) ? ETIMEDOUT : errno;
+      result->rtt_ms = -1;
+      return -1;
+    }
+
+    /* 接收响应 */
+    socklen_t from_len = sizeof(from);
+    ssize_t received = recvfrom(fd, recv_buf, sizeof(recv_buf), 0, (struct sockaddr *)&from, &from_len);
+
+    if (received < 0) {
+      result->success = false;
+      result->error_code = errno;
+      result->rtt_ms = -1;
+      return -1;
+    }
+
+    /* 防御性跳过可能附带的 IPv6 头 */
+    int hdr_offset = icmp_payload_offset(recv_buf, received, AF_INET6);
+    if (received < hdr_offset + (ssize_t)sizeof(struct icmp6_hdr)) {
+      result->success = false;
+      result->error_code = EMSGSIZE;
+      result->rtt_ms = -1;
+      return -1;
+    }
+
+    double recv_time = icmp_get_time_ms();
+
+    /* 解析响应 */
+    struct icmp6_hdr *reply = (struct icmp6_hdr *)(recv_buf + hdr_offset);
+
+    /* macOS 会把自身发出的 Echo Request 回环到 socket，跳过并等待真正的响应 */
+    if (icmp_is_self_echo((const uint8_t *)reply, AF_INET6, identifier, seq)) {
+      continue;
+    }
+
+    /* 检查是否为 Echo Reply 或 Time Exceeded */
+    if (reply->icmp6_type == ICMP6_ECHO_REPLY || reply->icmp6_type == ICMP6_TIME_EXCEEDED ||
+        reply->icmp6_type == ICMP6_DST_UNREACH) {
+      /* 对于 Echo Reply，验证 */
+      if (reply->icmp6_type == ICMP6_ECHO_REPLY) {
+        if (ntohs(reply->icmp6_id) != identifier || ntohs(reply->icmp6_seq) != seq) {
+          result->success = false;
+          result->error_code = ESRCH;
+          result->rtt_ms = -1;
+          return -1;
+        }
+      }
+
+      /* 提取 IP 地址 */
+      inet_ntop(AF_INET6, &from.sin6_addr, result->ip, sizeof(result->ip));
+      result->family = AF_INET6;
+      result->success = true;
+      result->icmp_type = reply->icmp6_type;
+      result->seq = seq;
+      result->identifier = identifier;
+      result->error_code = 0;
+
+      /* Hop Limit（仅当附带 IPv6 头时可读取，Hop Limit 位于偏移 7） */
+      if (hdr_offset > 0 && received >= hdr_offset + (ssize_t)sizeof(struct icmp6_hdr)) {
+        result->ttl = recv_buf[7];
+      }
+
+      /* 计算 RTT：Echo Reply 使用包内时间戳，错误响应使用收发时刻差 */
+      if (reply->icmp6_type == ICMP6_ECHO_REPLY) {
+        uint64_t orig_time_us = 0;
+        if (received >= hdr_offset + (ssize_t)sizeof(struct icmp6_hdr) + (ssize_t)sizeof(orig_time_us)) {
+          memcpy(&orig_time_us, recv_buf + hdr_offset + sizeof(struct icmp6_hdr), sizeof(orig_time_us));
+          double orig_time_ms = orig_time_us / 1000.0;
+          result->rtt_ms = recv_time - orig_time_ms;
+          if (result->rtt_ms < 0)
+            result->rtt_ms = 0;
+        } else {
+          result->rtt_ms = recv_time - send_time;
+        }
+      } else {
+        result->rtt_ms = recv_time - send_time;
+      }
+
+      return (reply->icmp6_type == ICMP6_ECHO_REPLY) ? 1 : 0;
+    }
+
     result->success = false;
-    result->error_code = EMSGSIZE;
+    result->error_code = EPROTONOSUPPORT;
     result->rtt_ms = -1;
     return -1;
   }
-
-  double recv_time = icmp_get_time_ms();
-
-  /* 解析响应 */
-  struct icmp6_hdr *reply = (struct icmp6_hdr *)recv_buf;
-
-  /* 检查是否为 Echo Reply 或 Time Exceeded */
-  if (reply->icmp6_type == ICMP6_ECHO_REPLY || reply->icmp6_type == ICMP6_TIME_EXCEEDED ||
-      reply->icmp6_type == ICMP6_DST_UNREACH) {
-    /* 对于 Echo Reply，验证 */
-    if (reply->icmp6_type == ICMP6_ECHO_REPLY) {
-      if (ntohs(reply->icmp6_id) != identifier || ntohs(reply->icmp6_seq) != seq) {
-        result->success = false;
-        result->error_code = ESRCH;
-        result->rtt_ms = -1;
-        return -1;
-      }
-    }
-
-    /* 提取 IP 地址 */
-    inet_ntop(AF_INET6, &from.sin6_addr, result->ip, sizeof(result->ip));
-    result->family = AF_INET6;
-    result->success = true;
-    result->icmp_type = reply->icmp6_type;
-    result->seq = seq;
-    result->identifier = identifier;
-    result->error_code = 0;
-
-    /* 计算 RTT */
-    uint64_t orig_time_us = 0;
-    if (received >= (ssize_t)(sizeof(struct icmp6_hdr) + sizeof(orig_time_us))) {
-      memcpy(&orig_time_us, recv_buf + sizeof(struct icmp6_hdr), sizeof(orig_time_us));
-      double orig_time_ms = orig_time_us / 1000.0;
-      result->rtt_ms = recv_time - orig_time_ms;
-      if (result->rtt_ms < 0)
-        result->rtt_ms = 0;
-    } else {
-      result->rtt_ms = recv_time - send_time;
-    }
-
-    return (reply->icmp6_type == ICMP6_ECHO_REPLY) ? 1 : 0;
-  }
-
-  result->success = false;
-  result->error_code = EPROTONOSUPPORT;
-  result->rtt_ms = -1;
-  return -1;
 }
 
 /* ------------------------------------------------------------
