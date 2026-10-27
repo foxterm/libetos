@@ -146,9 +146,9 @@ static int icmp_echo_ipv4(int fd, const struct sockaddr_in *dest, int seq, int i
 
   hdr->checksum = icmp_compute_checksum(packet, sizeof(packet));
 
-  if (ttl > 0) {
-    set_ttl_ipv4(fd, ttl);
-  }
+  // if (ttl > 0) {
+  //   set_ttl_ipv4(fd, ttl);
+  // }
 
   ssize_t sent = sendto(fd, packet, sizeof(packet), 0, (struct sockaddr *)dest, sizeof(*dest));
   if (sent < 0) {
@@ -262,9 +262,9 @@ static int icmp_echo_ipv6(int fd, const struct sockaddr_in6 *dest, int seq, int 
   uint64_t time_us = (uint64_t)(send_time * 1000.0);
   memcpy(packet + sizeof(struct icmp6_hdr), &time_us, sizeof(time_us));
 
-  if (ttl > 0) {
-    set_ttl_ipv6(fd, ttl);
-  }
+  // if (ttl > 0) {
+  //   set_ttl_ipv6(fd, ttl);
+  // }
 
   ssize_t sent = sendto(fd, packet, sizeof(packet), 0, (struct sockaddr *)dest, sizeof(*dest));
   if (sent < 0) {
