@@ -46,7 +46,7 @@ typedef struct {
 } EtosICMPHeader;
 
 /* ------------------------------------------------------------
-   内部辅助函数
+   内部辅助函数 (Ping 相关)
    ------------------------------------------------------------ */
 
 static uint16_t icmp_compute_checksum(const void *data, size_t len) {
@@ -93,12 +93,6 @@ static int icmp_resolve_host(const char *host, struct sockaddr_storage *addr, in
   return 0;
 }
 
-/**
- * 计算接收缓冲区中 ICMP 报文相对缓冲区起始的偏移。
- * macOS 的 IPv4 ICMP socket 在接收时会附带完整的 IP 头，
- * 解析 ICMP 头之前需要先跳过；IPv6 ICMPv6 socket 通常不附带
- * IPv6 头，此处仅在检测到真实 IP 头时返回对应长度。
- */
 static int icmp_payload_offset(const uint8_t *buf, ssize_t len, int family) {
   if (len <= 0)
     return 0;
@@ -112,11 +106,6 @@ static int icmp_payload_offset(const uint8_t *buf, ssize_t len, int family) {
   return 0;
 }
 
-/**
- * 判断收到的包是否为自身发出的 Echo Request。
- * macOS 在部分场景（如 IPv6 loopback）会把刚发出的 Echo Request
- * 回环到同一个 socket，需要跳过并继续等待真正的响应。
- */
 static bool icmp_is_self_echo(const uint8_t *icmp, int family, int identifier, int seq) {
   if (family == AF_INET6) {
     const struct icmp6_hdr *hdr = (const struct icmp6_hdr *)icmp;
@@ -130,12 +119,10 @@ static bool icmp_is_self_echo(const uint8_t *icmp, int family, int identifier, i
          ntohs(hdr->sequence) == (uint16_t)seq;
 }
 
-/** 设置 IPv4 socket 的 TTL */
 static int set_ttl_ipv4(int fd, int ttl) {
   return setsockopt(fd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
 }
 
-/** 设置 IPv6 socket 的 Hop Limit */
 static int set_ttl_ipv6(int fd, int hoplimit) {
   return setsockopt(fd, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &hoplimit, sizeof(hoplimit));
 }
@@ -153,19 +140,16 @@ static int icmp_echo_ipv4(int fd, const struct sockaddr_in *dest, int seq, int i
   hdr->identifier = htons((uint16_t)identifier);
   hdr->sequence = htons((uint16_t)seq);
 
-  /* 填充时间戳 */
   double send_time = icmp_get_time_ms();
   uint64_t time_us = (uint64_t)(send_time * 1000.0);
   memcpy(packet + ICMP_HEADER_SIZE, &time_us, sizeof(time_us));
 
   hdr->checksum = icmp_compute_checksum(packet, sizeof(packet));
 
-  /* 设置 TTL（如果指定） */
   if (ttl > 0) {
     set_ttl_ipv4(fd, ttl);
   }
 
-  /* 发送 */
   ssize_t sent = sendto(fd, packet, sizeof(packet), 0, (struct sockaddr *)dest, sizeof(*dest));
   if (sent < 0) {
     result->success = false;
@@ -173,7 +157,6 @@ static int icmp_echo_ipv4(int fd, const struct sockaddr_in *dest, int seq, int i
     return -1;
   }
 
-  /* 等待并接收响应：跳过自身回显的 Echo Request，直到收到有效响应 */
   uint8_t recv_buf[ETOS_ICMP_MAX_PACKET_SIZE];
   struct sockaddr_in from;
 
@@ -190,7 +173,6 @@ static int icmp_echo_ipv4(int fd, const struct sockaddr_in *dest, int seq, int i
       return -1;
     }
 
-    /* 接收响应 */
     socklen_t from_len = sizeof(from);
     ssize_t received = recvfrom(fd, recv_buf, sizeof(recv_buf), 0, (struct sockaddr *)&from, &from_len);
 
@@ -201,7 +183,6 @@ static int icmp_echo_ipv4(int fd, const struct sockaddr_in *dest, int seq, int i
       return -1;
     }
 
-    /* macOS 的 IPv4 ICMP socket 会附带 IP 头，先跳过 */
     int hdr_offset = icmp_payload_offset(recv_buf, received, AF_INET);
     if (received < hdr_offset + ICMP_HEADER_SIZE) {
       result->success = false;
@@ -211,18 +192,13 @@ static int icmp_echo_ipv4(int fd, const struct sockaddr_in *dest, int seq, int i
     }
 
     double recv_time = icmp_get_time_ms();
-
-    /* 解析响应 */
     EtosICMPHeader *reply = (EtosICMPHeader *)(recv_buf + hdr_offset);
 
-    /* 跳过自身回显的 Echo Request */
     if (icmp_is_self_echo((const uint8_t *)reply, AF_INET, identifier, seq)) {
       continue;
     }
 
-    /* 检查是否为 Echo Reply 或 Time Exceeded */
     if (reply->type == ICMP_ECHOREPLY || reply->type == ICMP_TIME_EXCEEDED || reply->type == ICMP_DEST_UNREACH) {
-      /* 对于 Echo Reply，验证 identifier 和 sequence */
       if (reply->type == ICMP_ECHOREPLY) {
         if (ntohs(reply->identifier) != identifier || ntohs(reply->sequence) != seq) {
           result->success = false;
@@ -232,7 +208,6 @@ static int icmp_echo_ipv4(int fd, const struct sockaddr_in *dest, int seq, int i
         }
       }
 
-      /* 提取 IP 地址 */
       inet_ntop(AF_INET, &from.sin_addr, result->ip, sizeof(result->ip));
       result->family = AF_INET;
       result->success = true;
@@ -241,12 +216,10 @@ static int icmp_echo_ipv4(int fd, const struct sockaddr_in *dest, int seq, int i
       result->identifier = identifier;
       result->error_code = 0;
 
-      /* 回复 TTL（macOS 附带的 IP 头中，TTL 位于偏移 8） */
       if (hdr_offset > 0 && received >= hdr_offset + ICMP_HEADER_SIZE) {
         result->ttl = recv_buf[8];
       }
 
-      /* 计算 RTT：Echo Reply 使用包内时间戳，错误响应使用收发时刻差 */
       if (reply->type == ICMP_ECHOREPLY) {
         uint64_t orig_time_us = 0;
         if (received >= hdr_offset + ICMP_HEADER_SIZE + (ssize_t)sizeof(orig_time_us)) {
@@ -285,17 +258,14 @@ static int icmp_echo_ipv6(int fd, const struct sockaddr_in6 *dest, int seq, int 
   hdr->icmp6_id = htons((uint16_t)identifier);
   hdr->icmp6_seq = htons((uint16_t)seq);
 
-  /* 填充时间戳 */
   double send_time = icmp_get_time_ms();
   uint64_t time_us = (uint64_t)(send_time * 1000.0);
   memcpy(packet + sizeof(struct icmp6_hdr), &time_us, sizeof(time_us));
 
-  /* 设置 Hop Limit（如果指定） */
   if (ttl > 0) {
     set_ttl_ipv6(fd, ttl);
   }
 
-  /* 发送 */
   ssize_t sent = sendto(fd, packet, sizeof(packet), 0, (struct sockaddr *)dest, sizeof(*dest));
   if (sent < 0) {
     result->success = false;
@@ -303,7 +273,6 @@ static int icmp_echo_ipv6(int fd, const struct sockaddr_in6 *dest, int seq, int 
     return -1;
   }
 
-  /* 等待并接收响应：跳过自身回显的 Echo Request，直到收到有效响应 */
   uint8_t recv_buf[ETOS_ICMP_MAX_PACKET_SIZE];
   struct sockaddr_in6 from;
 
@@ -320,7 +289,6 @@ static int icmp_echo_ipv6(int fd, const struct sockaddr_in6 *dest, int seq, int 
       return -1;
     }
 
-    /* 接收响应 */
     socklen_t from_len = sizeof(from);
     ssize_t received = recvfrom(fd, recv_buf, sizeof(recv_buf), 0, (struct sockaddr *)&from, &from_len);
 
@@ -331,7 +299,6 @@ static int icmp_echo_ipv6(int fd, const struct sockaddr_in6 *dest, int seq, int 
       return -1;
     }
 
-    /* 防御性跳过可能附带的 IPv6 头 */
     int hdr_offset = icmp_payload_offset(recv_buf, received, AF_INET6);
     if (received < hdr_offset + (ssize_t)sizeof(struct icmp6_hdr)) {
       result->success = false;
@@ -341,19 +308,14 @@ static int icmp_echo_ipv6(int fd, const struct sockaddr_in6 *dest, int seq, int 
     }
 
     double recv_time = icmp_get_time_ms();
-
-    /* 解析响应 */
     struct icmp6_hdr *reply = (struct icmp6_hdr *)(recv_buf + hdr_offset);
 
-    /* macOS 会把自身发出的 Echo Request 回环到 socket，跳过并等待真正的响应 */
     if (icmp_is_self_echo((const uint8_t *)reply, AF_INET6, identifier, seq)) {
       continue;
     }
 
-    /* 检查是否为 Echo Reply 或 Time Exceeded */
     if (reply->icmp6_type == ICMP6_ECHO_REPLY || reply->icmp6_type == ICMP6_TIME_EXCEEDED ||
         reply->icmp6_type == ICMP6_DST_UNREACH) {
-      /* 对于 Echo Reply，验证 */
       if (reply->icmp6_type == ICMP6_ECHO_REPLY) {
         if (ntohs(reply->icmp6_id) != identifier || ntohs(reply->icmp6_seq) != seq) {
           result->success = false;
@@ -363,7 +325,6 @@ static int icmp_echo_ipv6(int fd, const struct sockaddr_in6 *dest, int seq, int 
         }
       }
 
-      /* 提取 IP 地址 */
       inet_ntop(AF_INET6, &from.sin6_addr, result->ip, sizeof(result->ip));
       result->family = AF_INET6;
       result->success = true;
@@ -372,12 +333,10 @@ static int icmp_echo_ipv6(int fd, const struct sockaddr_in6 *dest, int seq, int 
       result->identifier = identifier;
       result->error_code = 0;
 
-      /* Hop Limit（仅当附带 IPv6 头时可读取，Hop Limit 位于偏移 7） */
       if (hdr_offset > 0 && received >= hdr_offset + (ssize_t)sizeof(struct icmp6_hdr)) {
         result->ttl = recv_buf[7];
       }
 
-      /* 计算 RTT：Echo Reply 使用包内时间戳，错误响应使用收发时刻差 */
       if (reply->icmp6_type == ICMP6_ECHO_REPLY) {
         uint64_t orig_time_us = 0;
         if (received >= hdr_offset + (ssize_t)sizeof(struct icmp6_hdr) + (ssize_t)sizeof(orig_time_us)) {
@@ -404,6 +363,168 @@ static int icmp_echo_ipv6(int fd, const struct sockaddr_in6 *dest, int seq, int 
 }
 
 /* ------------------------------------------------------------
+   Traceroute 内部实现：使用 UDP 套接字（绕过沙盒中 ICMP 设置 TTL 的权限限制）
+   ------------------------------------------------------------ */
+
+static int traceroute_hop_ipv4(const struct sockaddr_in *dest, int ttl, int timeout_ms, EtosICMPResult *result) {
+  int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (fd < 0) {
+    result->success = false;
+    result->error_code = errno;
+    return -1;
+  }
+
+#ifdef SO_NOSIGPIPE
+  int nosigpipe = 1;
+  setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof(nosigpipe));
+#endif
+
+  if (setsockopt(fd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl)) < 0) {
+    result->success = false;
+    result->error_code = errno;
+    close(fd);
+    return -1;
+  }
+
+  struct timeval tv;
+  tv.tv_sec = timeout_ms / 1000;
+  tv.tv_usec = (timeout_ms % 1000) * 1000;
+  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+  struct sockaddr_in target = *dest;
+  target.sin_port = htons(33434 + ttl);
+
+  double send_time = icmp_get_time_ms();
+  char payload = 0;
+  ssize_t sent = sendto(fd, &payload, 1, 0, (struct sockaddr *)&target, sizeof(target));
+  if (sent < 0) {
+    result->success = false;
+    result->error_code = errno;
+    close(fd);
+    return -1;
+  }
+
+  struct pollfd pfd;
+  pfd.fd = fd;
+  pfd.events = POLLIN;
+  int poll_result = poll(&pfd, 1, timeout_ms);
+
+  if (poll_result <= 0) {
+    result->success = false;
+    result->error_code = (poll_result == 0) ? ETIMEDOUT : errno;
+    result->rtt_ms = -1;
+    close(fd);
+    return -1;
+  }
+
+  struct sockaddr_in from;
+  socklen_t from_len = sizeof(from);
+  uint8_t recv_buf[512];
+  ssize_t received = recvfrom(fd, recv_buf, sizeof(recv_buf), 0, (struct sockaddr *)&from, &from_len);
+  double recv_time = icmp_get_time_ms();
+  close(fd);
+
+  if (received < 0) {
+    result->success = false;
+    result->error_code = errno;
+    result->rtt_ms = -1;
+    return -1;
+  }
+
+  inet_ntop(AF_INET, &from.sin_addr, result->ip, sizeof(result->ip));
+  result->family = AF_INET;
+  result->success = true;
+  result->seq = ttl;
+  result->error_code = 0;
+  result->rtt_ms = recv_time - send_time;
+  if (result->rtt_ms < 0) result->rtt_ms = 0;
+
+  if (from.sin_addr.s_addr == dest->sin_addr.s_addr) {
+    return 1;
+  }
+  return 0;
+}
+
+static int traceroute_hop_ipv6(const struct sockaddr_in6 *dest, int ttl, int timeout_ms, EtosICMPResult *result) {
+  int fd = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+  if (fd < 0) {
+    result->success = false;
+    result->error_code = errno;
+    return -1;
+  }
+
+#ifdef SO_NOSIGPIPE
+  int nosigpipe = 1;
+  setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof(nosigpipe));
+#endif
+
+  if (setsockopt(fd, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &ttl, sizeof(ttl)) < 0) {
+    result->success = false;
+    result->error_code = errno;
+    close(fd);
+    return -1;
+  }
+
+  struct timeval tv;
+  tv.tv_sec = timeout_ms / 1000;
+  tv.tv_usec = (timeout_ms % 1000) * 1000;
+  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+  struct sockaddr_in6 target = *dest;
+  target.sin6_port = htons(33434 + ttl);
+
+  double send_time = icmp_get_time_ms();
+  char payload = 0;
+  ssize_t sent = sendto(fd, &payload, 1, 0, (struct sockaddr *)&target, sizeof(target));
+  if (sent < 0) {
+    result->success = false;
+    result->error_code = errno;
+    close(fd);
+    return -1;
+  }
+
+  struct pollfd pfd;
+  pfd.fd = fd;
+  pfd.events = POLLIN;
+  int poll_result = poll(&pfd, 1, timeout_ms);
+
+  if (poll_result <= 0) {
+    result->success = false;
+    result->error_code = (poll_result == 0) ? ETIMEDOUT : errno;
+    result->rtt_ms = -1;
+    close(fd);
+    return -1;
+  }
+
+  struct sockaddr_in6 from;
+  socklen_t from_len = sizeof(from);
+  uint8_t recv_buf[512];
+  ssize_t received = recvfrom(fd, recv_buf, sizeof(recv_buf), 0, (struct sockaddr *)&from, &from_len);
+  double recv_time = icmp_get_time_ms();
+  close(fd);
+
+  if (received < 0) {
+    result->success = false;
+    result->error_code = errno;
+    result->rtt_ms = -1;
+    return -1;
+  }
+
+  inet_ntop(AF_INET6, &from.sin6_addr, result->ip, sizeof(result->ip));
+  result->family = AF_INET6;
+  result->success = true;
+  result->seq = ttl;
+  result->error_code = 0;
+  result->rtt_ms = recv_time - send_time;
+  if (result->rtt_ms < 0) result->rtt_ms = 0;
+
+  if (IN6_ARE_ADDR_EQUAL(&from.sin6_addr, &dest->sin6_addr)) {
+    return 1;
+  }
+  return 0;
+}
+
+/* ------------------------------------------------------------
    外部接口实现
    ------------------------------------------------------------ */
 
@@ -418,7 +539,6 @@ int etos_icmp_echo(const char *host, int timeout_ms, EtosICMPResult *result) {
   if (timeout_ms <= 0)
     timeout_ms = ETOS_ICMP_DEFAULT_TIMEOUT_MS;
 
-  /* 解析主机 */
   struct sockaddr_storage dest_addr;
   int family;
   if (icmp_resolve_host(host, &dest_addr, &family) < 0) {
@@ -426,7 +546,6 @@ int etos_icmp_echo(const char *host, int timeout_ms, EtosICMPResult *result) {
     return -1;
   }
 
-  /* 创建 ICMP socket */
   int protocol = (family == AF_INET6) ? IPPROTO_ICMPV6 : IPPROTO_ICMP;
   int fd = socket(family, SOCK_DGRAM, protocol);
   if (fd < 0) {
@@ -439,7 +558,6 @@ int etos_icmp_echo(const char *host, int timeout_ms, EtosICMPResult *result) {
   setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof(nosigpipe));
 #endif
 
-  /* 设置接收超时 */
   struct timeval tv;
   tv.tv_sec = timeout_ms / 1000;
   tv.tv_usec = (timeout_ms % 1000) * 1000;
@@ -470,7 +588,6 @@ int etos_icmp_traceroute_hop(const char *host, int ttl, int timeout_ms, EtosICMP
   if (timeout_ms <= 0)
     timeout_ms = ETOS_ICMP_DEFAULT_TIMEOUT_MS;
 
-  /* 解析主机 */
   struct sockaddr_storage dest_addr;
   int family;
   if (icmp_resolve_host(host, &dest_addr, &family) < 0) {
@@ -478,37 +595,11 @@ int etos_icmp_traceroute_hop(const char *host, int ttl, int timeout_ms, EtosICMP
     return -1;
   }
 
-  /* 创建 ICMP socket */
-  int protocol = (family == AF_INET6) ? IPPROTO_ICMPV6 : IPPROTO_ICMP;
-  int fd = socket(family, SOCK_DGRAM, protocol);
-  if (fd < 0) {
-    result->error_code = errno;
-    return -1;
-  }
-
-#ifdef SO_NOSIGPIPE
-  int nosigpipe = 1;
-  setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof(nosigpipe));
-#endif
-
-  /* 设置接收超时 */
-  struct timeval tv;
-  tv.tv_sec = timeout_ms / 1000;
-  tv.tv_usec = (timeout_ms % 1000) * 1000;
-  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-
-  int identifier = getpid() & 0xFFFF;
-  int seq = ttl; /* 使用 TTL 作为序列号，便于追踪 */
-
-  int ret;
   if (family == AF_INET6) {
-    ret = icmp_echo_ipv6(fd, (struct sockaddr_in6 *)&dest_addr, seq, identifier, timeout_ms, ttl, result);
+    return traceroute_hop_ipv6((struct sockaddr_in6 *)&dest_addr, ttl, timeout_ms, result);
   } else {
-    ret = icmp_echo_ipv4(fd, (struct sockaddr_in *)&dest_addr, seq, identifier, timeout_ms, ttl, result);
+    return traceroute_hop_ipv4((struct sockaddr_in *)&dest_addr, ttl, timeout_ms, result);
   }
-
-  close(fd);
-  return ret; /* 1 = 到达目标，0 = 中间跳，-1 = 超时或失败 */
 }
 
 const char *etos_icmp_strerror(int error_code) {
