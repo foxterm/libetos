@@ -19,11 +19,25 @@
 #include <time.h>
 
 /* ------------------------------------------------------------
-   内部常量与结构定义
+   内部常量与跨平台宏兼容定义 (适配 macOS/iOS/BSD 及 Linux)
    ------------------------------------------------------------ */
 #define ICMP_PAYLOAD_SIZE 56
 #define ICMP_HEADER_SIZE 8
 #define ICMP_TOTAL_SIZE (ICMP_HEADER_SIZE + ICMP_PAYLOAD_SIZE)
+
+#ifndef ICMP_TIMXCEED
+#define ICMP_TIMXCEED 11
+#endif
+#ifndef ICMP_TIME_EXCEEDED
+#define ICMP_TIME_EXCEEDED ICMP_TIMXCEED
+#endif
+
+#ifndef ICMP_UNREACH
+#define ICMP_UNREACH 3
+#endif
+#ifndef ICMP_DEST_UNREACH
+#define ICMP_DEST_UNREACH ICMP_UNREACH
+#endif
 
 typedef struct {
   uint8_t type;
@@ -279,7 +293,7 @@ static int icmp_echo_ipv6(int fd, const struct sockaddr_in6 *dest, int seq, int 
 }
 
 /* ------------------------------------------------------------
-   Traceroute 实现：UDP + connect() 绑定（兼容 macOS/iOS 沙盒及内核事件分发）
+   Traceroute 实现：UDP + connect() 绑定
    ------------------------------------------------------------ */
 
 static int traceroute_hop_ipv4(const struct sockaddr_in *dest, int ttl, int timeout_ms, EtosICMPResult *result) {
@@ -295,7 +309,6 @@ static int traceroute_hop_ipv4(const struct sockaddr_in *dest, int ttl, int time
   setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof(nosigpipe));
 #endif
 
-  /* 沙盒允许修改 UDP 的 TTL */
   if (setsockopt(fd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl)) < 0) {
     result->success = false;
     result->error_code = errno;
@@ -306,7 +319,6 @@ static int traceroute_hop_ipv4(const struct sockaddr_in *dest, int ttl, int time
   struct sockaddr_in target = *dest;
   target.sin_port = htons(33434 + ttl);
 
-  /* 核心：在 macOS/BSD 中，必须 connect UDP 套接字才能捕获异步 ICMP 超时返回 */
   if (connect(fd, (struct sockaddr *)&target, sizeof(target)) < 0) {
     result->success = false;
     result->error_code = errno;
@@ -351,15 +363,14 @@ static int traceroute_hop_ipv4(const struct sockaddr_in *dest, int ttl, int time
   result->seq = ttl;
   result->error_code = 0;
 
-  /* 判断是中间路由器超时还是到达目标 */
   if (recved < 0 || from.sin_addr.s_addr == 0 || from.sin_addr.s_addr == dest->sin_addr.s_addr) {
     inet_ntop(AF_INET, &dest->sin_addr, result->ip, sizeof(result->ip));
     result->family = AF_INET;
-    return 1; // 到达目标
+    return 1;
   } else {
     inet_ntop(AF_INET, &from.sin_addr, result->ip, sizeof(result->ip));
     result->family = AF_INET;
-    return 0; // 中间跳
+    return 0;
   }
 }
 
